@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Database, Shield, Cpu, CheckCircle2, XCircle, AlertTriangle,
+  Database, Shield, ShieldAlert, Cpu, CheckCircle2, XCircle, AlertTriangle,
   Terminal, Play, RefreshCw, Eye, EyeOff, Info, Lock,
-  ArrowRight, ChevronDown, ChevronRight, Copy, Check, Upload
+  ArrowRight, ChevronDown, ChevronRight, Copy, Check, Upload, FileCheck
 } from 'lucide-react';
 
 import { SableRunState, INITIAL_STATE, STEP_NAMES, STEP_PHASES, STEP_SUBSTEPS, VERDICT_COLORS, VERDICT_BG } from './sable/types';
@@ -445,65 +445,128 @@ export const SableModule: React.FC = () => {
           </div>
         </div>
         <div className="sable-header-actions">
-          <button
-            className={`cavr-explain-toggle ${explainSimply ? 'active' : ''}`}
-            onClick={() => setExplainSimply(e => !e)}
-          >
-            {explainSimply ? <EyeOff size={14}/> : <Eye size={14}/>}
-            {explainSimply ? 'Technical mode' : 'Explain simply'}
-          </button>
+          <div className="explain-toggle-card">
+            <span className="toggle-label">
+              <Eye size={13} /> Explain simply
+            </span>
+            <div
+              className={`toggle-switch ${explainSimply ? 'on' : ''}`}
+              onClick={() => setExplainSimply(e => !e)}
+              role="switch"
+              aria-checked={explainSimply}
+              title="Toggle plain English mode"
+            >
+              <span className="switch-knob" />
+            </div>
+          </div>
           {runState.proofData && (
-            <button className="cavr-explain-toggle" onClick={() => setShowProofDrawer(p => !p)}>
-              Proof drawer
+            <button
+              className="box-cta-button"
+              onClick={() => setShowProofDrawer(p => !p)}
+              style={{ background: '#fff', cursor: 'pointer' }}
+            >
+              <FileCheck size={14} />
+              <span>Proof drawer</span>
             </button>
           )}
         </div>
       </div>
 
       {/* ── Three top boxes ─────────────────────────────────────────── */}
-      <div className="cavr-top-boxes">
+      <div className="cavr-three-boxes">
         {/* Box 1: Baseline */}
-        <div
-          className={`cavr-info-box ${activeBoxGlow === 'baseline' ? 'active-glow' : ''}`}
-          onClick={() => setShowBaselineDialog(true)}
-        >
-          <div className="info-box-icon"><Database size={20}/></div>
-          <div className="info-box-body">
-            <div className="info-box-title">Baseline</div>
-            <div className="info-box-subtitle">Trusted Terraform and the security obligation to check against.</div>
-            <div className="info-box-cta">Click to view →</div>
+        <div className={`cavr-card-box ${activeBoxGlow === 'baseline' ? 'glow-active' : ''}`}>
+          <div className="box-badge-row">
+            <span className="box-icon-wrap blue">
+              <Database size={18} />
+            </span>
+            <span className="box-step-tag">STEP 1 · SECURITY OBLIGATION</span>
+          </div>
+          <h3 className="box-name">Baseline</h3>
+          <p className="box-info">
+            Trusted Terraform and the security obligation to check against.
+          </p>
+          <div className="box-footer-row">
+            <button
+              className="box-cta-button"
+              onClick={() => setShowBaselineDialog(true)}
+              id="click-to-view-baseline-btn"
+            >
+              <Eye size={14} />
+              <span>Click to view</span>
+            </button>
+            <span className="box-metric-tag">{runState.obligation?.obligation_id || 'S3-APPROLE'}</span>
           </div>
         </div>
 
-        {/* Box 2: Environment */}
-        <div
-          className={`cavr-info-box ${activeBoxGlow === 'env' ? 'active-glow' : ''}`}
-          onClick={() => setShowEnvDialog(true)}
-        >
-          <div className="info-box-icon"><Cpu size={20}/></div>
-          <div className="info-box-body">
-            <div className="info-box-title">Environment checking</div>
-            <div className="info-box-subtitle">Local, offline tools that gather evidence.</div>
-            <div className="info-box-cta">Click here →</div>
+        {/* Box 2: Environment checking */}
+        <div className={`cavr-card-box ${activeBoxGlow === 'env' ? 'glow-active' : ''}`}>
+          <div className="box-badge-row">
+            <span className="box-icon-wrap green">
+              <Cpu size={18} />
+            </span>
+            <span className="box-step-tag">STEP 2 · EVIDENCE ENGINES</span>
+          </div>
+          <h3 className="box-name">Environment checking</h3>
+          <p className="box-info">
+            Local, offline tools that gather evidence without network or cloud access.
+          </p>
+          <div className="box-footer-row">
+            <button
+              className="box-cta-button"
+              onClick={() => setShowEnvDialog(true)}
+              id="click-here-env-btn"
+            >
+              <Terminal size={14} />
+              <span>Click here</span>
+            </button>
+            <span className="box-metric-tag">Checkov · python-hcl2</span>
           </div>
         </div>
 
         {/* Box 3: Action */}
-        <div
-          className={`cavr-info-box ${activeBoxGlow === 'action' ? 'active-glow' : ''}`}
-          onClick={() => setShowActionDialog(true)}
-        >
-          <div className="info-box-icon"><Shield size={20}/></div>
-          <div className="info-box-body">
-            <div className="info-box-title">Action</div>
-            <div className="info-box-subtitle">Pipeline steps, signal weights, and decision logic.</div>
-            <div className="info-box-cta">Click to view →</div>
+        <div className={`cavr-card-box ${activeBoxGlow === 'action' ? 'glow-active' : ''}`}>
+          <div className="box-badge-row">
+            <span className="box-icon-wrap amber">
+              <ShieldAlert size={18} />
+            </span>
+            <span className="box-step-tag">STEP 3 · DECISION LOGIC</span>
+          </div>
+          <h3 className="box-name">Action</h3>
+          <p className="box-info">
+            Pipeline steps, signal weights, and deterministic decision logic.
+          </p>
+          <div className="box-footer-row">
+            <button
+              className="box-cta-button"
+              onClick={() => setShowActionDialog(true)}
+              id="click-to-view-action-btn"
+            >
+              <Info size={14} />
+              <span>Click to view</span>
+            </button>
+            <span className="box-metric-tag">5 Invariants · 0-10</span>
           </div>
         </div>
       </div>
 
       {/* ── Wide workflow box ────────────────────────────────────────── */}
-      <div className="cavr-workflow-box">
+      <div className="wide-workflow-box">
+        <div className="workflow-box-header">
+          <div className="workflow-title-area">
+            <span className="live-status-pill">
+              <span className={`status-dot ${isRunning ? 'pulsing' : ''}`} />
+              {isRunning ? 'PIPELINE ACTIVE · 8 PHASES' : 'INFRASTRUCTURE ASSURANCE ENGINE'}
+            </span>
+            <h4>Infrastructure Security Boundary Assurance</h4>
+            <p>
+              {explainSimply
+                ? 'Watch how ASENT inspects Terraform refactors, tracks data resources across renames, and verifies security boundaries without any cloud access.'
+                : 'Deterministic 8-stage pipeline. AST & HCL parsing, multi-signal correspondence, sound policy projection, and evidence ledger.'}
+            </p>
+          </div>
+        </div>
+
         {/* Scenario selector */}
         <div className="sable-scenario-bar">
           <div className="sable-scenario-families">
@@ -550,42 +613,68 @@ export const SableModule: React.FC = () => {
           </div>
         </div>
 
-        {/* 8-step timeline */}
-        <div className="cavr-timeline">
-          {STEP_NAMES.map((name, i) => {
-            const status = i < runState.stepIndex ? 'done' : i === runState.stepIndex ? 'running' : 'pending';
-            return (
-              <div
-                key={i}
-                className={`cavr-step ${status}`}
-                onClick={() => setExpandedStep(expandedStep === i ? null : i)}
-              >
-                <div className="cavr-step-indicator">
-                  <div className="cavr-step-dot"/>
-                  {i < STEP_NAMES.length - 1 && <div className="cavr-step-line"/>}
+        {/* Target Scenario / Banner Row */}
+        <div className="interception-prompt-card" style={{ marginBottom: '24px' }}>
+          <div className="prompt-meta-col">
+            <span className="prompt-label">TARGET SCENARIO</span>
+            <code className="prompt-code">
+              {scenarios.find(s => s.id === selectedScenario)?.name || selectedScenario}
+            </code>
+          </div>
+
+          <div className="prompt-narrative-col">
+            <span className="narrative-tag">
+              {explainSimply ? 'Simple Explanation' : 'Pipeline State Transition'}
+            </span>
+            <p className="narrative-text">
+              {runState.wording || (explainSimply
+                ? 'Select a scenario and click "Run scenario" to test boundary preservation.'
+                : 'Engine standing by. Deterministic correspondence and bounded projection ready.')}
+            </p>
+          </div>
+
+          {runState.proofData && (
+            <button 
+              className="proof-drawer-btn"
+              onClick={() => setShowProofDrawer(true)}
+            >
+              <Lock size={13} />
+              <span>Proof Details</span>
+            </button>
+          )}
+        </div>
+
+        {/* 8-step horizontal timeline */}
+        <div className="timeline-horizontal-wrapper">
+          <div className="timeline-track-line" />
+          <div className="timeline-nodes-row">
+            {STEP_NAMES.map((name, i) => {
+              const isPast = runState.stepIndex > i;
+              const isCurrent = runState.stepIndex === i;
+              return (
+                <div
+                  key={i}
+                  className={`timeline-node-item ${isCurrent ? 'active-step' : ''} ${isPast ? 'completed-step' : ''}`}
+                >
+                  <div
+                    className="node-click-area"
+                    onClick={() => setExpandedStep(expandedStep === i ? null : i)}
+                  >
+                    <div className="node-marker">
+                      {isPast ? <Check size={12} /> : <span>{i + 1}</span>}
+                    </div>
+                    <strong className="node-title">{name}</strong>
+                    <span className="node-desc">{STEP_SUBSTEPS[i]}</span>
+                  </div>
                 </div>
-                <div className="cavr-step-content">
-                  <div className="cavr-step-index">Step {i + 1}</div>
-                  <div className="cavr-step-name">{name}</div>
-                  <div className="cavr-step-phase">{STEP_PHASES[i]} · {STEP_SUBSTEPS[i]}</div>
-                  {status === 'running' && (
-                    <div className="cavr-step-status running">Running…</div>
-                  )}
-                  {status === 'done' && (
-                    <div className="cavr-step-status done"><CheckCircle2 size={11}/> Done</div>
-                  )}
-                </div>
-                <div className="cavr-step-chevron">
-                  {expandedStep === i ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
 
         {/* Expanded step detail */}
         {expandedStep !== null && (
-          <div className="sable-stage-detail">
+          <div className="sable-stage-detail" style={{ marginBottom: '20px' }}>
             <div className="sable-stage-detail-header">
               <strong>Step {expandedStep + 1}: {STEP_NAMES[expandedStep]}</strong>
               <span>{STEP_PHASES[expandedStep]} · {STEP_SUBSTEPS[expandedStep]}</span>
@@ -633,7 +722,7 @@ export const SableModule: React.FC = () => {
         )}
 
         {/* Analysis Console */}
-        <div className="sable-console">
+        <div className="sable-console" style={{ marginBottom: '24px' }}>
           {/* Lifecycle bar */}
           <div className="sable-lifecycle-bar">
             {LIFECYCLE_STAGES.map((stage, i) => (
@@ -692,40 +781,38 @@ export const SableModule: React.FC = () => {
         </div>
 
         {/* Evidence tabs */}
-        <div className="cavr-evidence-tabs">
-          <div className="cavr-evidence-tab-bar">
-            {EVIDENCE_TABS.map(tab => {
-              const isUnlocked = unlockedTabs.has(tab.id);
-              const hasAlert = newTabAlerts[tab.id];
-              const isWholeBenchmark = tab.id === 'benchmark' || tab.id === 'ablations';
-              return (
-                <button
-                  key={tab.id}
-                  className={`cavr-evidence-tab ${activeEvidenceTab === tab.id ? 'active' : ''} ${!isUnlocked ? 'locked' : ''} ${hasAlert ? 'pulse' : ''}`}
-                  onClick={() => isUnlocked && setActiveEvidenceTab(tab.id)}
-                  title={!isUnlocked ? 'Runs when this stage completes' : isWholeBenchmark ? 'Whole-benchmark view — click Run Benchmark inside' : ''}
-                >
-                  {tab.label}
-                  {isWholeBenchmark && <span className="sable-tab-sub"> (whole benchmark)</span>}
-                  {hasAlert && <span className="sable-tab-pulse"/>}
-                </button>
-              );
-            })}
-          </div>
+        <div className="evidence-tabs-bar">
+          {EVIDENCE_TABS.map(tab => {
+            const isUnlocked = unlockedTabs.has(tab.id);
+            const hasAlert = newTabAlerts[tab.id];
+            const isWholeBenchmark = tab.id === 'benchmark' || tab.id === 'ablations';
+            return (
+              <button
+                key={tab.id}
+                className={`evidence-tab-btn ${activeEvidenceTab === tab.id ? 'active' : ''} ${hasAlert ? 'pulse-alert' : ''}`}
+                onClick={() => isUnlocked && setActiveEvidenceTab(tab.id)}
+                title={!isUnlocked ? 'Runs when this stage completes' : isWholeBenchmark ? 'Whole-benchmark view — click Run Benchmark inside' : ''}
+                style={!isUnlocked ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
+              >
+                {tab.label}
+                {isWholeBenchmark && <span className="sable-tab-sub"> (whole benchmark)</span>}
+              </button>
+            );
+          })}
+        </div>
 
-          <div className="cavr-evidence-tab-content">
-            {activeEvidenceTab === 'overview' && <OverviewTab runState={runState} explainSimply={explainSimply}/>}
-            {activeEvidenceTab === 'specification' && <SpecificationTab runState={runState} explainSimply={explainSimply}/>}
-            {activeEvidenceTab === 'diff' && <TerraformDiffTab runState={runState} explainSimply={explainSimply} onRerunCustom={handleRerunCustom}/>}
-            {activeEvidenceTab === 'graph' && <ResourceGraphTab runState={runState} explainSimply={explainSimply}/>}
-            {activeEvidenceTab === 'correspondence' && <CorrespondenceTab runState={runState} explainSimply={explainSimply}/>}
-            {activeEvidenceTab === 'projection' && <ProjectionTab runState={runState} explainSimply={explainSimply}/>}
-            {activeEvidenceTab === 'verification' && <VerificationTab runState={runState} explainSimply={explainSimply}/>}
-            {activeEvidenceTab === 'decision' && <DecisionTab runState={runState} explainSimply={explainSimply} onAuditDecision={sendAuditDecision}/>}
-            {activeEvidenceTab === 'benchmark' && <BenchmarkTab/>}
-            {activeEvidenceTab === 'ablations' && <AblationsKillTestsTab/>}
-            {activeEvidenceTab === 'evidence' && <EvidenceTab runState={runState} explainSimply={explainSimply}/>}
-          </div>
+        <div className="evidence-tab-content-area">
+          {activeEvidenceTab === 'overview' && <OverviewTab runState={runState} explainSimply={explainSimply}/>}
+          {activeEvidenceTab === 'specification' && <SpecificationTab runState={runState} explainSimply={explainSimply}/>}
+          {activeEvidenceTab === 'diff' && <TerraformDiffTab runState={runState} explainSimply={explainSimply} onRerunCustom={handleRerunCustom}/>}
+          {activeEvidenceTab === 'graph' && <ResourceGraphTab runState={runState} explainSimply={explainSimply}/>}
+          {activeEvidenceTab === 'correspondence' && <CorrespondenceTab runState={runState} explainSimply={explainSimply}/>}
+          {activeEvidenceTab === 'projection' && <ProjectionTab runState={runState} explainSimply={explainSimply}/>}
+          {activeEvidenceTab === 'verification' && <VerificationTab runState={runState} explainSimply={explainSimply}/>}
+          {activeEvidenceTab === 'decision' && <DecisionTab runState={runState} explainSimply={explainSimply} onAuditDecision={sendAuditDecision}/>}
+          {activeEvidenceTab === 'benchmark' && <BenchmarkTab/>}
+          {activeEvidenceTab === 'ablations' && <AblationsKillTestsTab/>}
+          {activeEvidenceTab === 'evidence' && <EvidenceTab runState={runState} explainSimply={explainSimply}/>}
         </div>
       </div>
 
