@@ -157,3 +157,55 @@ Key limits: bounded AST discovery rather than symbolic execution; fake-marker eq
 - **Source labels:** normal safe, live workspace, recorded, research and controlled reproduction are separate. None of the built-in cases claims that Claude or another agent selected a malicious package.
 
 [Design-source mapping](docs/implementation-notes.md) records the supplied document authority and implementation choices. [API guide](docs/api.md) describes local integration endpoints.
+
+---
+
+## CAVR Deep Research Pipeline (P1 to P13)
+
+The upgraded Continuous Artifact Verification & Runtime (CAVR) engine implements the full 13-phase pipeline mapped to the 8 interactive timeline steps:
+
+### Pipeline Phases Mapping:
+1. **P1: Capture (Timeline Step 1)**: Intercepts agent `pip install` commands at the local PEP 503 proxy (`/simple/`) before execution or host filesystem modification.
+2. **P2: Requirement Gate (Timeline Step 2)**: Evaluates `project_policy.json` rules, project allowlists, and explicit denylists. Rejects unauthorized packages with immediate rule justifications.
+3. **P3: Context Extraction (Timeline Step 5)**: Uses Python AST to inspect the project workspace (`sample_project/invoice_extractor`), extracting API call sites (`PdfReader`, `extract_text`), imports, and Git diffs.
+4. **P4: Capability Contract Inference (Timeline Step 5)**: Deterministically maps call sites to capability vocabulary (`FILE_READ(scope)`, `FILE_WRITE(scope)`, `NETWORK_CONNECT(scope)`, `PROCESS_EXEC`, `SECRET_READ`, `PERSISTENCE_WRITE`, `NATIVE_EXEC`) with confidence scores.
+5. **P5: Package Resolution & Transitive Tree (Timeline Step 3)**: Pins SHA-256 digests, builds full transitive dependency DAGs (`nodes` and `edges`), and queries the bundled offline OSV database snapshot.
+6. **P6: Trigger Discovery (Timeline Step 5)**: AST visitor identifies security-relevant predicates (`os.getenv`, `os.path.exists`, `socket.gethostname`, `platform`, `time`, CI flags), traces reachability to sensitive sinks, and computes priority:
+   $$\text{priority} = \frac{\text{sink\_risk} \times \text{reachability\_confidence} \times \text{novelty}}{\text{estimated\_run\_cost}}$$
+7. **P7: Adaptive Counterfactual Activation (Timeline Step 6)**: Runs a multi-run frontier loop. Run 0 tests baseline execution; subsequent runs synthesize targeted fake credentials (`~/.aws/credentials`, `AWS_SECRET_ACCESS_KEY`), fake files, or time shims inside disposable containers (`asent-sandbox`).
+8. **P8: OS Observation & Normalization (Timeline Step 6)**: Normalizes Python runtime audit hooks (`sys.addaudithook`) and syscall traces into semantic actions (`SECRET_ACCESS`, `NETWORK_CONNECT`, `FILE_WRITE`). Honestly records observation methods and eBPF limitations.
+9. **P9: Causal Capability Graph & Policy (Timeline Step 7)**: Builds a NetworkX directed graph tracking source-to-sink paths (e.g. `canary -> secret_access -> network_send`). Maps observations to 4 policy states: `VERIFIED` (ALLOW), `RESTRICTED` (ALLOW with restrictions), `UNRESOLVED` (NEEDS_REVIEW fail closed), and `REJECTED` (BLOCK).
+10. **P10: Minimal Safe Repair (Timeline Step 7)**: Weighted search across 4 repair levels (safe patch, safe parent/transitive, direct upgrade, supported replacement) minimizing disruption objective:
+    $$\text{Cost} = w_1 \cdot (\text{deps}) + w_2 \cdot (\text{version distance}) + w_3 \cdot (\text{call sites}) + w_4 \cdot (\text{new risk})$$
+    Requires explicit human operator approval.
+11. **P11: Candidate Re-Verification (Timeline Step 7)**: Re-executes sample project unit tests and security obligations for chosen substitutes inside fresh containers.
+12. **P12: Clean Reconstruction (Timeline Step 8)**: Discards all analysis sandboxes and reconstructs production environments from clean baseline digests plus pinned hashes.
+13. **P13: Assurance Evidence Ledger (Timeline Step 8)**: Hash-chains every transition record into a Merkle-linked evidence chain. Issues official JSON and printable HTML certificates with bounded trust claims.
+
+---
+
+## 5 Seeded Scenarios
+
+CAVR includes 5 synthetic scenarios located in `backend/cavr/fixtures/scenarios.py`:
+
+| # | Scenario | Package | Key Observation | Expected Decision |
+|---|---|---|---|---|
+| **1** | **Approved Benign** | `pdf-clean-extractor==1.0.0` | Clean memory-only parsing, conforms to contract | `ALLOW` (VERIFIED) |
+| **2** | **Known Vulnerable** | `reportlab-legacy==3.5.21` | Matches CVE-2023-33733 in offline OSV mirror | `BLOCK` (REJECTED) |
+| **3** | **Trigger-Dependent (Dormant)** | `dormant-exfil==1.2.0` | Clean in Run 0; awakens exfiltration under fake AWS key | `BLOCK` (REJECTED) |
+| **4** | **Transitive Risk** | `invoice-utils==2.0.1` | Root looks clean; nested `sub-telemetry-hook` steals canary | `BLOCK` (REJECTED) |
+| **5** | **Typosquat / Slopsquat** | `requests-security==2.31.0` | Homoglyph match on `requests`; credential read | `BLOCK` (REJECTED) |
+
+### How to Run:
+- **Interactive UI**: Navigate to the **CAVR** tab and click any of the 5 scenario chips above the workflow box (`Approved Benign`, `Known Vulnerable`, `Trigger-Dependent`, `Transitive Risk`, or `Typosquat`).
+- **REST API / CLI**:
+  ```bash
+  # Launch scenario execution
+  curl -X POST "http://127.0.0.1:8000/api/cavr/run?scenario=trigger_dependent"
+  
+  # Verify cryptographic hash chain for a run
+  curl "http://127.0.0.1:8000/api/cavr/evidence/<RUN_ID>/verify"
+  
+  # Retrieve metrics
+  curl "http://127.0.0.1:8000/api/cavr/metrics"
+  ```

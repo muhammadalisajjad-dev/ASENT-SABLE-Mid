@@ -2,8 +2,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Database, ShieldAlert, Cpu, CheckCircle2, XCircle, AlertTriangle, 
   Terminal, ExternalLink, Copy, Check, Play, RefreshCw, Eye, 
-  Lock, ArrowRight, Download, ThumbsUp, ThumbsDown, Info, HelpCircle
+  Lock, ArrowRight, Download, ThumbsUp, ThumbsDown, Info, HelpCircle,
+  FileCode, Layers, ShieldCheck, Activity, Search, Sparkles
 } from 'lucide-react';
+
+import { CavrRunState } from './cavr/types';
+import { StageDetailPanel } from './cavr/StageDetailPanel';
+import { ExpandableStep, SubStep } from './cavr/ExpandableStep';
+import { OverviewTab } from './cavr/OverviewTab';
+import { RequirementsTab } from './cavr/RequirementsTab';
+import { CapabilityContractTab } from './cavr/CapabilityContractTab';
+import { TriggersTab } from './cavr/TriggersTab';
+import { CounterfactualTab } from './cavr/CounterfactualTab';
+import { CausalGraphTab } from './cavr/CausalGraphTab';
+import { RepairTab } from './cavr/RepairTab';
+import { AssuranceTab } from './cavr/AssuranceTab';
+import { MetricsTab } from './cavr/MetricsTab';
 
 interface TrustedPackage {
   name: string;
@@ -22,40 +36,63 @@ export const CavrModule: React.FC = () => {
   const [showEnvDialog, setShowEnvDialog] = useState(false);
   const [showProofDrawer, setShowProofDrawer] = useState(false);
 
-  // Trusted cache state
+  // Cache state & dialog filters
   const [packages, setPackages] = useState<TrustedPackage[]>([]);
+  const [cacheSearch, setCacheSearch] = useState('');
+  const [reverifiedRows, setReverifiedRows] = useState<Record<string, boolean>>({});
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+
+  // Action dialog interactive typosquat demo
+  const [demoInput, setDemoInput] = useState('reqeusts');
+
+  // Active evidence tab: overview | requirements | contract | triggers | counterfactual | causal | repair | assurance | metrics
+  const [activeEvidenceTab, setActiveEvidenceTab] = useState<string>('overview');
+  const [newTabAlerts, setNewTabAlerts] = useState<Record<string, boolean>>({});
 
   // Workflow state
   const [explainSimply, setExplainSimply] = useState(false);
   const [activeWorkflowBox, setActiveWorkflowBox] = useState<'none' | 'cache' | 'action' | 'env'>('none');
   const [timelineStep, setTimelineStep] = useState<number>(0);
+  const [expandedTimelineStep, setExpandedTimelineStep] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [currentScenario, setCurrentScenario] = useState<'typosquat' | 'safe' | 'hash_mismatch' | 'clean_new'>('typosquat');
-  
-  // Live run data
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [interceptedPackage, setInterceptedPackage] = useState<string>('requests-security');
-  const [interceptedVersion, setInterceptedVersion] = useState<string>('2.31.0');
-  const [currentStateMessage, setCurrentStateMessage] = useState<string>('Awaiting change trigger...');
-  const [currentPlainMessage, setCurrentPlainMessage] = useState<string>('Ready to test package changes.');
+  const [currentScenario, setCurrentScenario] = useState<string>('trigger_dependent');
 
-  // Sandbox & Terminal state
-  const [containerLifecycle, setContainerLifecycle] = useState<'idle' | 'created' | 'locked' | 'mounted' | 'running' | 'destroyed'>('idle');
-  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
-  const terminalEndRef = useRef<HTMLDivElement | null>(null);
-  const [meters, setMeters] = useState({
-    network_attempts: 0,
-    writes_outside_scratch: 0,
-    processes_spawned: 0,
-    secrets_touched: 0,
+  // Custom package input
+  const [customPackageInput, setCustomPackageInput] = useState('');
+
+  // Comprehensive run state
+  const [runState, setRunState] = useState<CavrRunState>({
+    runId: null,
+    stepIndex: 0,
+    package: 'dormant-exfil',
+    version: '1.2.0',
+    scenarioKey: 'trigger_dependent',
+    explainSimply: false,
+    verdict: null,
+    policyState: null,
+    honestyWording: 'Awaiting execution...',
+    currentStateMessage: 'Ready to launch multi-layer assurance pipeline.',
+    currentPlainMessage: 'Select a scenario above to observe the real pipeline in action.',
+    gateResult: null,
+    resolution: null,
+    cacheResult: null,
+    actionData: null,
+    counterfactualResults: null,
+    causalGraph: null,
+    violatingPaths: null,
+    repair: null,
+    reverification: null,
+    certificate: null,
+    reconstruction: null,
+    terminalLogs: [],
+    meters: { network_attempts: 0, writes_outside_scratch: 0, processes_spawned: 0, secrets_touched: 0 },
+    honeytokenFlashing: false,
+    proofData: null
   });
-  const [honeytokenFlashing, setHoneytokenFlashing] = useState(false);
 
-  // Verdict state
-  const [verdictData, setVerdictData] = useState<any>(null);
+  const [containerLifecycle, setContainerLifecycle] = useState<'idle' | 'created' | 'locked' | 'mounted' | 'running' | 'destroyed'>('idle');
   const [alternativeDecision, setAlternativeDecision] = useState<'pending' | 'approved' | 'rejected'>('pending');
-  const [proofData, setProofData] = useState<any>(null);
+  const terminalEndRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch trusted packages
   const fetchCache = async () => {
@@ -78,7 +115,7 @@ export const CavrModule: React.FC = () => {
     if (terminalEndRef.current) {
       terminalEndRef.current.scrollTop = terminalEndRef.current.scrollHeight;
     }
-  }, [terminalLogs]);
+  }, [runState.terminalLogs]);
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -86,36 +123,73 @@ export const CavrModule: React.FC = () => {
     setTimeout(() => setCopiedHash(null), 2000);
   };
 
-  // Run Interception Pipeline
-  const runInterception = async (scenarioType: 'typosquat' | 'safe' | 'hash_mismatch' | 'clean_new') => {
+  const reverifyHashRow = (pkgName: string) => {
+    setReverifiedRows(prev => ({ ...prev, [pkgName]: true }));
+    setTimeout(() => {
+      setReverifiedRows(prev => ({ ...prev, [pkgName]: false }));
+    }, 2500);
+  };
+
+  // Launch Scenario
+  const runScenario = async (scenarioKey: string, customPkg?: string) => {
     if (isRunning) return;
     setIsRunning(true);
-    setCurrentScenario(scenarioType);
+    setCurrentScenario(scenarioKey);
     setTimelineStep(0);
+    setExpandedTimelineStep(null);
     setActiveWorkflowBox('none');
-    setTerminalLogs([]);
-    setMeters({ network_attempts: 0, writes_outside_scratch: 0, processes_spawned: 0, secrets_touched: 0 });
-    setHoneytokenFlashing(false);
-    setVerdictData(null);
     setAlternativeDecision('pending');
-    setProofData(null);
     setContainerLifecycle('idle');
+    setActiveEvidenceTab('overview');
+    setNewTabAlerts({});
 
-    let pkg = 'requests-security';
-    let ver = '2.31.0';
-    if (scenarioType === 'safe') {
-      pkg = 'requests';
-      ver = '2.31.0';
-    } else if (scenarioType === 'hash_mismatch') {
-      pkg = 'pypdf';
-      ver = '4.2.0';
-    } else if (scenarioType === 'clean_new') {
-      pkg = 'safe-math-utils';
+    let pkg = customPkg || 'dormant-exfil';
+    let ver = '1.2.0';
+
+    if (scenarioKey === 'approved_benign') {
+      pkg = 'pdf-clean-extractor';
       ver = '1.0.0';
+    } else if (scenarioKey === 'known_vulnerable') {
+      pkg = 'reportlab-legacy';
+      ver = '3.5.21';
+    } else if (scenarioKey === 'trigger_dependent') {
+      pkg = 'dormant-exfil';
+      ver = '1.2.0';
+    } else if (scenarioKey === 'transitive_risk') {
+      pkg = 'invoice-utils';
+      ver = '2.0.1';
+    } else if (scenarioKey === 'typosquat') {
+      pkg = 'requests-security';
+      ver = '2.31.0';
     }
 
-    setInterceptedPackage(pkg);
-    setInterceptedVersion(ver);
+    setRunState(prev => ({
+      ...prev,
+      package: pkg,
+      version: ver,
+      scenarioKey: scenarioKey,
+      explainSimply: explainSimply,
+      verdict: null,
+      policyState: null,
+      honestyWording: 'Evaluating...',
+      currentStateMessage: `Interception initiated for ${pkg}==${ver}...`,
+      currentPlainMessage: `Started checking ${pkg}. ASENT is intercepting it now.`,
+      gateResult: null,
+      resolution: null,
+      cacheResult: null,
+      actionData: null,
+      counterfactualResults: null,
+      causalGraph: null,
+      violatingPaths: null,
+      repair: null,
+      reverification: null,
+      certificate: null,
+      reconstruction: null,
+      terminalLogs: [],
+      meters: { network_attempts: 0, writes_outside_scratch: 0, processes_spawned: 0, secrets_touched: 0 },
+      honeytokenFlashing: false,
+      proofData: null
+    }));
 
     try {
       const res = await fetch('/api/cavr/intercept', {
@@ -124,13 +198,15 @@ export const CavrModule: React.FC = () => {
         body: JSON.stringify({
           package: pkg,
           version: ver,
-          scenario_type: scenarioType
+          scenario_type: scenarioKey
         })
       });
 
-      if (!res.ok) throw new Error('Interception initiation failed');
+      if (!res.ok) throw new Error('Interception failed');
       const data = await res.json();
-      setActiveRunId(data.run_id);
+      const currentRunId = data.run_id;
+
+      setRunState(prev => ({ ...prev, runId: currentRunId }));
 
       // Connect to SSE stream
       const eventSource = new EventSource(data.stream_url);
@@ -138,7 +214,7 @@ export const CavrModule: React.FC = () => {
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          handlePipelineEvent(payload);
+          handlePipelineEvent(payload, currentRunId);
         } catch (e) {
           // heartbeat
         }
@@ -154,103 +230,227 @@ export const CavrModule: React.FC = () => {
     }
   };
 
-  const handlePipelineEvent = (ev: any) => {
-    const { type, data } = ev;
+  const handlePipelineEvent = (ev: any, currentRunId: string) => {
+    const { type, step_index, phase, payload } = ev;
 
-    if (type === 'state_change') {
-      setTimelineStep(data.step_index);
-      setCurrentStateMessage(data.message);
-      setCurrentPlainMessage(data.plain_explanation || data.message);
+    setRunState(prev => {
+      let updated = { ...prev };
 
-      if (data.state === 'INTERCEPTED') {
-        setActiveWorkflowBox('none');
-        setContainerLifecycle('idle');
-      } else if (data.state === 'CACHE_CHECK') {
-        setActiveWorkflowBox('cache');
-      } else if (data.state === 'INSPECTING') {
+      if (step_index !== undefined) {
+        setTimelineStep(step_index);
+        updated.stepIndex = step_index;
+      }
+
+      if (payload?.message) {
+        updated.currentStateMessage = payload.message;
+      }
+      if (payload?.plain_explanation) {
+        updated.currentPlainMessage = payload.plain_explanation;
+      }
+
+      // Handle specific phase payloads
+      if (type === 'state_change') {
+        if (payload.state === 'INTERCEPTED') {
+          setActiveWorkflowBox('none');
+          setContainerLifecycle('idle');
+        } else if (payload.state === 'SANDBOXING') {
+          setActiveWorkflowBox('env');
+          setContainerLifecycle('running');
+        } else if (payload.state === 'RELEASED') {
+          setActiveWorkflowBox('none');
+          setContainerLifecycle('destroyed');
+          setIsRunning(false);
+        } else if (payload.state === 'ALT_RECOMMENDED') {
+          setActiveWorkflowBox('none');
+          setContainerLifecycle('destroyed');
+          setIsRunning(false);
+        }
+
+        if (payload.verdict) {
+          updated.verdict = payload.verdict;
+        }
+        if (payload.policy_state) {
+          updated.policyState = payload.policy_state;
+        }
+        if (payload.honesty_wording) {
+          updated.honestyWording = payload.honesty_wording;
+        }
+        if (payload.certificate) {
+          updated.certificate = payload.certificate;
+          setNewTabAlerts(a => ({ ...a, assurance: true }));
+        }
+        if (payload.reconstruction) {
+          updated.reconstruction = payload.reconstruction;
+        }
+      } 
+      else if (type === 'requirement_gate_evaluated') {
+        updated.gateResult = payload;
+        setNewTabAlerts(a => ({ ...a, requirements: true }));
+      }
+      else if (type === 'package_resolved') {
+        updated.resolution = payload.resolution;
+      }
+      else if (type === 'cache_result') {
+        updated.cacheResult = payload;
+        if (payload.result === 'HIT') {
+          setActiveWorkflowBox('cache');
+        }
+      }
+      else if (type === 'action_completed') {
         setActiveWorkflowBox('action');
-      } else if (data.state === 'SANDBOXING') {
-        setActiveWorkflowBox('env');
-        setContainerLifecycle('created');
-        setTimeout(() => setContainerLifecycle('locked'), 400);
-        setTimeout(() => setContainerLifecycle('mounted'), 900);
-        setTimeout(() => setContainerLifecycle('running'), 1400);
-      } else if (data.state === 'ALLOWED' || data.state === 'RELEASED') {
-        setActiveWorkflowBox('none');
-        setContainerLifecycle('destroyed');
-        setIsRunning(false);
-      } else if (data.state === 'ALT_RECOMMENDED' || data.state === 'AWAITING_APPROVAL') {
-        setActiveWorkflowBox('none');
-        setContainerLifecycle('destroyed');
-        setIsRunning(false);
+        updated.actionData = payload;
+        setNewTabAlerts(a => ({ ...a, contract: true, triggers: true }));
       }
-    } else if (type === 'sandbox_log') {
-      setTerminalLogs((prev) => [...prev, data.line]);
-    } else if (type === 'honeytoken_flash') {
-      setHoneytokenFlashing(true);
-      setMeters((m) => ({ ...m, secrets_touched: m.secrets_touched + 1 }));
-    } else if (type === 'sandbox_metrics') {
-      setMeters({
-        network_attempts: data.network_attempts || 0,
-        writes_outside_scratch: data.writes_outside_scratch || 0,
-        processes_spawned: data.processes_spawned || 0,
-        secrets_touched: data.secrets_touched || 0
-      });
-      if (data.honeytoken_accessed) {
-        setHoneytokenFlashing(true);
+      else if (type === 'sandbox_log') {
+        updated.terminalLogs = [...updated.terminalLogs, payload.line];
+        if (payload.line.includes('HONEYTOKEN') || payload.line.includes('CRITICAL_THREAT')) {
+          updated.honeytokenFlashing = true;
+          updated.meters = { ...updated.meters, secrets_touched: updated.meters.secrets_touched + 1 };
+        }
+        if (payload.line.includes('Network attempt') || payload.line.includes('socket.connect')) {
+          updated.meters = { ...updated.meters, network_attempts: updated.meters.network_attempts + 1 };
+        }
       }
-    } else if (type === 'verdict_computed') {
-      setVerdictData(data);
-      // Fetch proof drawer data
-      if (ev.run_id) {
-        fetch(`/api/cavr/proof/${ev.run_id}`)
-          .then((r) => r.json())
-          .then((proof) => setProofData(proof))
-          .catch((e) => console.error(e));
+      else if (type === 'counterfactual_completed') {
+        updated.counterfactualResults = payload.counterfactual_results;
+        setNewTabAlerts(a => ({ ...a, counterfactual: true }));
       }
-    }
+      else if (type === 'verdict_computed') {
+        updated.verdict = payload.verdict;
+        updated.policyState = payload.policy_state;
+        updated.honestyWording = payload.honesty_wording;
+        updated.causalGraph = payload.causal_graph;
+        updated.violatingPaths = payload.violating_paths;
+        updated.repair = payload.repair;
+        updated.reverification = payload.reverification;
+
+        setNewTabAlerts(a => ({ ...a, causal: true, repair: true }));
+
+        // Fetch proof drawer data
+        fetch(`/api/cavr/proof/${currentRunId}`)
+          .then(r => r.json())
+          .then(proof => {
+            setRunState(s => ({ ...s, proofData: proof }));
+          })
+          .catch(e => console.error(e));
+      }
+
+      return updated;
+    });
   };
 
   const handleAlternativeChoice = async (approved: boolean) => {
-    if (!activeRunId || !verdictData?.alternative_package) return;
+    if (!runState.runId || !runState.repair?.chosen_candidate) return;
+    const chosenName = runState.repair.chosen_candidate.name;
+
     try {
       await fetch('/api/cavr/approve-alternative', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          run_id: activeRunId,
-          package: interceptedPackage,
-          alternative: verdictData.alternative_package.package,
+          run_id: runState.runId,
+          package: runState.package,
+          alternative: chosenName,
           approved,
           user: 'Security Operator (You)',
-          reason: approved ? 'Operator approved safe substitute' : 'Operator rejected substitute'
+          reason: approved ? 'Operator authorized clean substitute' : 'Operator rejected substitute'
         })
       });
+
       setAlternativeDecision(approved ? 'approved' : 'rejected');
       setTimelineStep(7);
       setActiveWorkflowBox('none');
-      if (approved) {
-        setCurrentStateMessage(`Operator Approved: Verified substitute '${verdictData.alternative_package.package}' released to agent environment.`);
-        setCurrentPlainMessage(`You approved the recommended alternative '${verdictData.alternative_package.package}'. The safe package was released to the agent environment!`);
-      } else {
-        setCurrentStateMessage(`Operator Rejected: Untrusted package '${interceptedPackage}' permanently quarantined.`);
-        setCurrentPlainMessage(`You rejected the recommendation. The malicious package '${interceptedPackage}' remains quarantined and blocked.`);
-      }
+      setRunState(prev => ({
+        ...prev,
+        stepIndex: 7,
+        currentStateMessage: approved
+          ? `Operator Approved: Safe substitute '${chosenName}' reconstructed into pristine baseline.`
+          : `Operator Rejected: Hostile package '${prev.package}' permanently blocked.`,
+        currentPlainMessage: approved
+          ? `You approved the substitute '${chosenName}'. A clean environment was created!`
+          : `You rejected the substitute. '${prev.package}' remains blocked.`
+      }));
     } catch (err) {
       console.error('Alternative approval failed:', err);
     }
   };
 
-  const timelineSteps = [
-    { label: 'Agent runs pip install', desc: 'AI Coding Agent attempts dependency installation' },
-    { label: 'ASENT index catches it', desc: 'Redirected via PIP_INDEX_URL local PEP 503 proxy' },
-    { label: 'Quarantine', desc: 'Stored in read-only sandbox isolation folder' },
-    { label: 'Cache Check', desc: 'Looked up against verified SHA-256 SQLite records' },
-    { label: 'Action (AST Inspection)', desc: 'Static syntax tree & typosquatting analysis' },
-    { label: 'Environment (Sandbox)', desc: 'Isolated container execution with honeytokens & telemetry' },
-    { label: 'Verdict Decision', desc: 'Deterministic policy evaluation (ALLOW / BLOCK)' },
-    { label: 'Release or Block', desc: 'Package passed to agent environment or quarantined' }
+  // 8 Timeline Steps with real Sub-stages breakdown
+  const timelineStepsData = [
+    {
+      title: 'Agent runs pip install',
+      summary: explainSimply ? 'Agent requests package' : 'Interception of agent install command',
+      substeps: [
+        { phase: 'P1', name: 'CLI Gateway Interception', status: timelineStep >= 0 ? 'done' : 'pending', timeTaken: '12ms', desc: 'Captured through local PEP 503 proxy' }
+      ]
+    },
+    {
+      title: 'Index catches it',
+      summary: explainSimply ? 'Policy & gate check' : 'PEP 503 Quarantine & Policy Gate',
+      substeps: [
+        { phase: 'P1', name: 'PEP 503 Index Lookup', status: timelineStep >= 1 ? 'done' : 'pending', timeTaken: '24ms', desc: 'Proxy blocks direct external outbound' },
+        { phase: 'P2', name: 'Project Requirement Gate', status: timelineStep >= 1 ? 'done' : 'pending', timeTaken: '45ms', desc: 'Evaluates project_policy.json rules' }
+      ]
+    },
+    {
+      title: 'Quarantine',
+      summary: explainSimply ? 'Isolated & scanned' : 'Transitive Tree & OSV Scan',
+      substeps: [
+        { phase: 'P5', name: 'Read-Only Sandbox Mount', status: timelineStep >= 2 ? 'done' : 'pending', timeTaken: '30ms', desc: 'Pinned sha256 stored in read-only isolation' },
+        { phase: 'P5', name: 'Transitive Tree Resolution', status: timelineStep >= 2 ? 'done' : 'pending', timeTaken: '85ms', desc: 'Resolves sub-dependencies and edges' },
+        { phase: 'P5', name: 'Offline OSV Vulnerability Audit', status: timelineStep >= 2 ? 'done' : 'pending', timeTaken: '40ms', desc: 'Scans offline mirror snapshot' }
+      ]
+    },
+    {
+      title: 'Cache Check',
+      summary: explainSimply ? 'Database match check' : 'Pre-Verified Store Lookup',
+      substeps: [
+        { phase: 'P4', name: 'SQLite Hash Lookup', status: timelineStep >= 3 ? 'done' : 'pending', timeTaken: '15ms', desc: 'Checks trusted_packages table' },
+        { phase: 'P4', name: 'Integrity Checksum Validation', status: timelineStep >= 3 ? 'done' : 'pending', timeTaken: '20ms', desc: 'Compares computed sha256 to record' }
+      ]
+    },
+    {
+      title: 'Action (AST Inspection)',
+      summary: explainSimply ? 'Code & contract check' : 'AST Sinks & Trigger Discovery',
+      substeps: [
+        { phase: 'P3', name: 'Project Context Extraction', status: timelineStep >= 4 ? 'done' : 'pending', timeTaken: '50ms', desc: 'AST parses invoice project call sites' },
+        { phase: 'P4', name: 'Capability Contract Inference', status: timelineStep >= 4 ? 'done' : 'pending', timeTaken: '65ms', desc: 'Derives required vs denied permissions' },
+        { phase: 'P6', name: 'AST Trigger Predicate Discovery', status: timelineStep >= 4 ? 'done' : 'pending', timeTaken: '90ms', desc: 'Calculates trigger priority formula' }
+      ]
+    },
+    {
+      title: 'Environment (Sandbox)',
+      summary: explainSimply ? 'Safe container testing' : 'Adaptive Counterfactual Runs',
+      substeps: [
+        { phase: 'P7', name: 'Run 0: Baseline Execution', status: timelineStep >= 5 ? 'done' : 'pending', timeTaken: '680ms', desc: 'Tests behavior under default conditions' },
+        { phase: 'P7', name: 'Run 1..n: Adaptive Counterfactuals', status: timelineStep >= 5 ? 'done' : 'pending', timeTaken: '820ms', desc: 'Synthesizes fake credentials & env vars' },
+        { phase: 'P8', name: 'OS Telemetry Normalization', status: timelineStep >= 5 ? 'done' : 'pending', timeTaken: '45ms', desc: 'sys.addaudithook action normalization' }
+      ]
+    },
+    {
+      title: 'Verdict Decision',
+      summary: explainSimply ? 'Security decision made' : 'Causal Graph & Policy Evaluation',
+      substeps: [
+        { phase: 'P9', name: 'NetworkX Causal Capability Graph', status: timelineStep >= 6 ? 'done' : 'pending', timeTaken: '110ms', desc: 'Evaluates source-to-sink dataflow paths' },
+        { phase: 'P10', name: 'Minimal Safe Repair Search', status: timelineStep >= 6 ? 'done' : 'pending', timeTaken: '80ms', desc: 'Solves 4-level disruption objective' },
+        { phase: 'P11', name: 'Candidate Re-Verification', status: timelineStep >= 6 ? 'done' : 'pending', timeTaken: '70ms', desc: 'Verifies sample project obligations' }
+      ]
+    },
+    {
+      title: 'Release or Block',
+      summary: explainSimply ? 'Final safe delivery' : 'Reconstruction & Assurance',
+      substeps: [
+        { phase: 'P12', name: 'Clean Environment Reconstruction', status: timelineStep >= 7 ? 'done' : 'pending', timeTaken: '60ms', desc: 'Constructs pristine baseline; discards sandbox' },
+        { phase: 'P13', name: 'Assurance Certificate Generation', status: timelineStep >= 7 ? 'done' : 'pending', timeTaken: '40ms', desc: 'Issues hash-chained evidence record' }
+      ]
+    }
   ];
+
+  // Filtered packages for cache dialog
+  const filteredPackages = packages.filter(p => 
+    p.name.toLowerCase().includes(cacheSearch.toLowerCase()) || 
+    p.capabilities.toLowerCase().includes(cacheSearch.toLowerCase())
+  );
 
   return (
     <div className="cavr-module-container" id="cavr-section">
@@ -258,13 +458,13 @@ export const CavrModule: React.FC = () => {
       <div className="cavr-header-row">
         <div>
           <div className="cavr-eyebrow">
-            <span className="module-pulse-dot" /> CAVR MODULE · CONTINUOUS ARTIFACT VERIFICATION & RUNTIME
+            <span className="module-pulse-dot" /> CAVR MODULE · CONTINUOUS ARTIFACT VERIFICATION &amp; RUNTIME
           </div>
           <h2 className="cavr-title">CAVR</h2>
           <p className="cavr-subtitle">
-            Dependency and package trust assurance gate. Intercepts untrusted agent packages, 
-            verifies cryptographic hashes against cache, performs AST static inspection, and tests 
-            hostile candidate artifacts in locked-down sandboxes before release.
+            Research-grade package assurance gate. Intercepts agent dependencies, 
+            derives deterministic capability contracts, adaptively triggers dormant paths via 
+            counterfactual synthesis, and proves trust with cryptographic evidence chains.
           </p>
         </div>
 
@@ -275,17 +475,20 @@ export const CavrModule: React.FC = () => {
           </span>
           <button 
             className={`toggle-switch ${explainSimply ? 'on' : ''}`}
-            onClick={() => setExplainSimply(!explainSimply)}
-            title="Switch between plain english explanations and technical security details"
+            onClick={() => {
+              setExplainSimply(!explainSimply);
+              setRunState(s => ({ ...s, explainSimply: !explainSimply }));
+            }}
+            title="Toggle between plain language descriptions and technical security details"
           >
             <span className="switch-knob" />
           </button>
         </div>
       </div>
 
-      {/* THE THREE BOXES */}
+      {/* THE THREE BOXES (Top Row) */}
       <div className="cavr-three-boxes">
-        {/* BOX 1: CACHE (Leftmost) */}
+        {/* BOX 1: CACHE */}
         <div className={`cavr-card-box ${activeWorkflowBox === 'cache' ? 'glow-active' : ''}`}>
           <div className="box-badge-row">
             <span className="box-icon-wrap blue">
@@ -295,7 +498,7 @@ export const CavrModule: React.FC = () => {
           </div>
           <h3 className="box-name">Cache</h3>
           <p className="box-info">
-            Stored packages and Dependencies to Check against
+            Cryptographically pinned packages safe for AI coding agents
           </p>
           <div className="box-footer-row">
             <button 
@@ -304,13 +507,13 @@ export const CavrModule: React.FC = () => {
               id="click-to-view-cache-btn"
             >
               <Eye size={14} />
-              <span>Click to View</span>
+              <span>Click to view</span>
             </button>
             <span className="box-metric-tag">{packages.length} pinned</span>
           </div>
         </div>
 
-        {/* BOX 2: ACTION (Middle) */}
+        {/* BOX 2: ACTION */}
         <div className={`cavr-card-box ${activeWorkflowBox === 'action' ? 'glow-active' : ''}`}>
           <div className="box-badge-row">
             <span className="box-icon-wrap amber">
@@ -320,7 +523,7 @@ export const CavrModule: React.FC = () => {
           </div>
           <h3 className="box-name">Action</h3>
           <p className="box-info">
-            Deep Static Inspection &amp; AST Anomaly Analysis
+            Static AST inspection, trigger ranking &amp; capability inference
           </p>
           <div className="box-footer-row">
             <button 
@@ -329,13 +532,13 @@ export const CavrModule: React.FC = () => {
               id="click-to-view-action-btn"
             >
               <Info size={14} />
-              <span>Inspection Details</span>
+              <span>Click to view</span>
             </button>
             <span className="box-metric-tag">AST · Typosquat</span>
           </div>
         </div>
 
-        {/* BOX 3: ENVIRONMENT CHECKING (Rightmost) */}
+        {/* BOX 3: ENVIRONMENT CHECKING */}
         <div className={`cavr-card-box ${activeWorkflowBox === 'env' ? 'glow-active' : ''}`}>
           <div className="box-badge-row">
             <span className="box-icon-wrap green">
@@ -345,7 +548,7 @@ export const CavrModule: React.FC = () => {
           </div>
           <h3 className="box-name">Environment checking</h3>
           <p className="box-info">
-            Isolated Multi-Layer Hostile Sandbox
+            Multi-layer isolated sandbox with honeytokens &amp; counterfactuals
           </p>
           <div className="box-footer-row">
             <button 
@@ -354,7 +557,7 @@ export const CavrModule: React.FC = () => {
               id="click-here-env-btn"
             >
               <Terminal size={14} />
-              <span>Click here</span>
+              <span>Click to view</span>
             </button>
             <span className="box-metric-tag">Hardened 30s</span>
           </div>
@@ -367,76 +570,87 @@ export const CavrModule: React.FC = () => {
           <div className="workflow-title-area">
             <span className="live-status-pill">
               <span className={`status-dot ${isRunning ? 'pulsing' : ''}`} />
-              {isRunning ? 'PIPELINE ACTIVE' : 'WORKFLOW DEMONSTRATION'}
+              {isRunning ? 'PIPELINE ACTIVE · 13 PHASES' : 'RESEARCH WORKFLOW ENGINE'}
             </span>
-            <h4>Real Multi-Layer Interception &amp; Sandboxing Workflow</h4>
+            <h4>Continuous Artifact Verification &amp; Runtime Pipeline</h4>
             <p>
               {explainSimply
-                ? 'Watch how ASENT safely intercepts package requests, inspects them, and stops malicious attacks in a real isolated sandbox.'
-                : 'Deterministic run state machine: INTERCEPTED → CACHE_CHECK → INSPECTING → SANDBOXING → DETERMINISTIC VERDICT → RELEASE/BLOCK.'}
+                ? 'Watch how ASENT safely catches dependencies, tests hidden paths with fake credentials, and keeps your project secure.'
+                : '13-phase deterministic pipeline mapped to 8 timeline steps. Real AST, NetworkX causal graph, and Merkle evidence ledger.'}
             </p>
           </div>
 
-          {/* Test Scenario Buttons */}
-          <div className="scenario-btn-group">
-            <span className="scenario-label">Launch Demonstration:</span>
-            <button 
-              className={`scenario-btn ${currentScenario === 'typosquat' ? 'selected' : ''}`}
-              onClick={() => runInterception('typosquat')}
-              disabled={isRunning}
-            >
-              <Play size={12} />
-              <span>Malicious Package (Typosquat)</span>
-            </button>
+          {/* 5 Seeded Scenario Selector Chips */}
+          <div className="scenario-chips-wrapper">
+            <span className="scenario-chips-label">Seeded Scenarios:</span>
+            <div className="scenario-chips-group">
+              <button 
+                className={`scenario-chip ${currentScenario === 'approved_benign' ? 'active' : ''}`}
+                onClick={() => runScenario('approved_benign')}
+                disabled={isRunning}
+              >
+                <CheckCircle2 size={12} className="text-emerald-400" />
+                <span>1. Approved Benign</span>
+              </button>
 
-            <button 
-              className={`scenario-btn ${currentScenario === 'safe' ? 'selected' : ''}`}
-              onClick={() => runInterception('safe')}
-              disabled={isRunning}
-            >
-              <Play size={12} />
-              <span>Trusted Package (Cache Hit)</span>
-            </button>
+              <button 
+                className={`scenario-chip ${currentScenario === 'known_vulnerable' ? 'active' : ''}`}
+                onClick={() => runScenario('known_vulnerable')}
+                disabled={isRunning}
+              >
+                <AlertTriangle size={12} className="text-amber-400" />
+                <span>2. Known Vulnerable (OSV)</span>
+              </button>
 
-            <button 
-              className={`scenario-btn ${currentScenario === 'hash_mismatch' ? 'selected' : ''}`}
-              onClick={() => runInterception('hash_mismatch')}
-              disabled={isRunning}
-            >
-              <Play size={12} />
-              <span>Tampered Hash Mismatch</span>
-            </button>
+              <button 
+                className={`scenario-chip ${currentScenario === 'trigger_dependent' ? 'active' : ''}`}
+                onClick={() => runScenario('trigger_dependent')}
+                disabled={isRunning}
+              >
+                <Sparkles size={12} className="text-cyan-400" />
+                <span>3. Trigger-Dependent (Dormant)</span>
+              </button>
 
-            <button 
-              className={`scenario-btn ${currentScenario === 'clean_new' ? 'selected' : ''}`}
-              onClick={() => runInterception('clean_new')}
-              disabled={isRunning}
-            >
-              <Play size={12} />
-              <span>Clean New Package</span>
-            </button>
+              <button 
+                className={`scenario-chip ${currentScenario === 'transitive_risk' ? 'active' : ''}`}
+                onClick={() => runScenario('transitive_risk')}
+                disabled={isRunning}
+              >
+                <Layers size={12} className="text-purple-400" />
+                <span>4. Transitive Risk</span>
+              </button>
+
+              <button 
+                className={`scenario-chip ${currentScenario === 'typosquat' ? 'active' : ''}`}
+                onClick={() => runScenario('typosquat')}
+                disabled={isRunning}
+              >
+                <XCircle size={12} className="text-red-400" />
+                <span>5. Typosquat / Slopsquat</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Live Interception Prompt / Status Banner */}
+        {/* Custom Input / Banner Row */}
         <div className="interception-prompt-card">
           <div className="prompt-meta-col">
-            <span className="prompt-label">INTERCEPTED AGENT ACTION</span>
+            <span className="prompt-label">INTERCEPTED TARGET</span>
             <code className="prompt-code">
-              pip install {interceptedPackage}=={interceptedVersion}
+              pip install {runState.package}=={runState.version}
             </code>
           </div>
 
           <div className="prompt-narrative-col">
             <span className="narrative-tag">
-              {explainSimply ? 'Simple Explanation' : 'Security State Transition'}
+              {explainSimply ? 'Simple Explanation' : 'Pipeline State Transition'}
             </span>
             <p className="narrative-text">
-              {explainSimply ? currentPlainMessage : currentStateMessage}
+              {explainSimply ? runState.currentPlainMessage : runState.currentStateMessage}
             </p>
           </div>
 
-          {proofData && (
+          {runState.proofData && (
             <button 
               className="proof-drawer-btn"
               onClick={() => setShowProofDrawer(true)}
@@ -447,70 +661,133 @@ export const CavrModule: React.FC = () => {
           )}
         </div>
 
-        {/* HORIZONTAL INTERCEPTION TIMELINE */}
+        {/* 8-STEP EXPANDABLE GLOWING TIMELINE */}
         <div className="timeline-horizontal-wrapper">
           <div className="timeline-track-line" />
           <div className="timeline-nodes-row">
-            {timelineSteps.map((step, idx) => {
-              const isPast = timelineStep > idx;
-              const isCurrent = timelineStep === idx;
-              return (
-                <div 
-                  key={idx} 
-                  className={`timeline-node-item ${isCurrent ? 'active-step' : ''} ${isPast ? 'completed-step' : ''}`}
-                >
-                  <div className="node-marker">
-                    {isPast ? <Check size={12} /> : <span>{idx + 1}</span>}
-                  </div>
-                  <strong className="node-title">{step.label}</strong>
-                  <span className="node-desc">
-                    {explainSimply
-                      ? idx === 0 ? 'Agent requests code'
-                      : idx === 1 ? 'Caught at gateway'
-                      : idx === 2 ? 'Isolated safely'
-                      : idx === 3 ? 'Known good check'
-                      : idx === 4 ? 'Code inspection'
-                      : idx === 5 ? 'Container testing'
-                      : idx === 6 ? 'Decision made'
-                      : 'Done safely'
-                      : step.desc}
-                  </span>
-                </div>
-              );
-            })}
+            {timelineStepsData.map((step, idx) => (
+              <ExpandableStep
+                key={idx}
+                stepIndex={idx}
+                currentStepIndex={timelineStep}
+                title={step.title}
+                summary={step.summary}
+                substeps={step.substeps as SubStep[]}
+                isExpanded={expandedTimelineStep === idx}
+                onToggleExpand={() => setExpandedTimelineStep(expandedTimelineStep === idx ? null : idx)}
+                onClickStep={() => setExpandedTimelineStep(expandedTimelineStep === idx ? null : idx)}
+                explainSimply={explainSimply}
+              />
+            ))}
           </div>
         </div>
 
-        {/* SANDBOX CONSOLE & TELEMETRY PANEL (Shown when Environment is engaged or logs available) */}
-        {(activeWorkflowBox === 'env' || terminalLogs.length > 0 || verdictData) && (
+        {/* STAGE DETAIL PANEL */}
+        <StageDetailPanel state={runState} />
+
+        {/* 9 EVIDENCE TABS ROW */}
+        <div className="evidence-tabs-bar">
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'overview' ? 'active' : ''}`}
+            onClick={() => setActiveEvidenceTab('overview')}
+          >
+            Overview
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'requirements' ? 'active' : ''} ${newTabAlerts.requirements ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('requirements')}
+          >
+            Requirements
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'contract' ? 'active' : ''} ${newTabAlerts.contract ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('contract')}
+          >
+            Capability Contract
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'triggers' ? 'active' : ''} ${newTabAlerts.triggers ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('triggers')}
+          >
+            Triggers
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'counterfactual' ? 'active' : ''} ${newTabAlerts.counterfactual ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('counterfactual')}
+          >
+            Counterfactual Runs
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'causal' ? 'active' : ''} ${newTabAlerts.causal ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('causal')}
+          >
+            Causal Graph
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'repair' ? 'active' : ''} ${newTabAlerts.repair ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('repair')}
+          >
+            Repair
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'assurance' ? 'active' : ''} ${newTabAlerts.assurance ? 'pulse-alert' : ''}`}
+            onClick={() => setActiveEvidenceTab('assurance')}
+          >
+            Assurance
+          </button>
+
+          <button 
+            className={`evidence-tab-btn ${activeEvidenceTab === 'metrics' ? 'active' : ''}`}
+            onClick={() => setActiveEvidenceTab('metrics')}
+          >
+            Metrics
+          </button>
+        </div>
+
+        {/* ACTIVE EVIDENCE TAB CONTENT */}
+        <div className="evidence-tab-content-area">
+          {activeEvidenceTab === 'overview' && <OverviewTab state={runState} />}
+          {activeEvidenceTab === 'requirements' && <RequirementsTab state={runState} />}
+          {activeEvidenceTab === 'contract' && <CapabilityContractTab state={runState} />}
+          {activeEvidenceTab === 'triggers' && <TriggersTab state={runState} />}
+          {activeEvidenceTab === 'counterfactual' && <CounterfactualTab state={runState} />}
+          {activeEvidenceTab === 'causal' && <CausalGraphTab state={runState} />}
+          {activeEvidenceTab === 'repair' && (
+            <RepairTab 
+              state={runState} 
+              onApproveReject={handleAlternativeChoice}
+              decisionState={alternativeDecision}
+            />
+          )}
+          {activeEvidenceTab === 'assurance' && <AssuranceTab state={runState} />}
+          {activeEvidenceTab === 'metrics' && <MetricsTab state={runState} />}
+        </div>
+
+        {/* SANDBOX CONSOLE & BEHAVIOR METERS */}
+        {(activeWorkflowBox === 'env' || runState.terminalLogs.length > 0 || runState.verdict) && (
           <div className="sandbox-console-panel">
-            {/* Lifecycle Bar */}
             <div className="lifecycle-bar-container">
               <span className="lifecycle-title">Sandbox Lifecycle:</span>
               <div className="lifecycle-stages">
-                <span className={`lifecycle-stage ${['created', 'locked', 'mounted', 'running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>
-                  1. Created
-                </span>
+                <span className={`lifecycle-stage ${['created', 'locked', 'mounted', 'running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>1. Created</span>
                 <span className="stage-arrow">→</span>
-                <span className={`lifecycle-stage ${['locked', 'mounted', 'running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>
-                  2. Locked down
-                </span>
+                <span className={`lifecycle-stage ${['locked', 'mounted', 'running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>2. Locked down</span>
                 <span className="stage-arrow">→</span>
-                <span className={`lifecycle-stage ${['mounted', 'running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>
-                  3. Package mounted
-                </span>
+                <span className={`lifecycle-stage ${['mounted', 'running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>3. Package mounted</span>
                 <span className="stage-arrow">→</span>
-                <span className={`lifecycle-stage ${['running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>
-                  4. Tests running
-                </span>
+                <span className={`lifecycle-stage ${['running', 'destroyed'].includes(containerLifecycle) ? 'active' : ''}`}>4. Tests running</span>
                 <span className="stage-arrow">→</span>
-                <span className={`lifecycle-stage ${containerLifecycle === 'destroyed' ? 'active destroyed' : ''}`}>
-                  5. Destroyed
-                </span>
+                <span className={`lifecycle-stage ${containerLifecycle === 'destroyed' ? 'active destroyed' : ''}`}>5. Destroyed</span>
               </div>
             </div>
 
-            {/* Lockdown Badges with Plain Word Tooltips */}
             <div className="lockdown-badges-row">
               <div className="lockdown-badge" title="Network isolation: all socket creation and internet connections are strictly blocked">
                 <span className="badge-k">Network:</span> <span className="badge-v red">OFF</span>
@@ -535,9 +812,7 @@ export const CavrModule: React.FC = () => {
               </div>
             </div>
 
-            {/* Live Terminal & Behavior Meters Grid */}
             <div className="terminal-and-meters-grid">
-              {/* Terminal */}
               <div className="sandbox-terminal-box">
                 <div className="terminal-topbar">
                   <div className="terminal-dots">
@@ -551,10 +826,10 @@ export const CavrModule: React.FC = () => {
                   <span className="terminal-live-tag">LIVE FEED</span>
                 </div>
                 <div className="terminal-body" ref={terminalEndRef}>
-                  {terminalLogs.length === 0 ? (
+                  {runState.terminalLogs.length === 0 ? (
                     <div className="terminal-empty">Awaiting container execution...</div>
                   ) : (
-                    terminalLogs.map((log, idx) => (
+                    runState.terminalLogs.map((log, idx) => (
                       <div 
                         key={idx} 
                         className={`terminal-log-line ${
@@ -570,7 +845,6 @@ export const CavrModule: React.FC = () => {
                 </div>
               </div>
 
-              {/* Behavior Meters */}
               <div className="behavior-meters-card">
                 <div className="meters-header">
                   <h5>Behavioral Telemetry Meters</h5>
@@ -581,12 +855,12 @@ export const CavrModule: React.FC = () => {
                   <div className="meter-item">
                     <div className="meter-label-row">
                       <span>Network Attempts</span>
-                      <strong>{meters.network_attempts}</strong>
+                      <strong>{runState.meters.network_attempts}</strong>
                     </div>
                     <div className="meter-bar-track">
                       <div 
-                        className={`meter-bar-fill ${meters.network_attempts > 0 ? 'red' : 'green'}`}
-                        style={{ width: `${Math.min(meters.network_attempts * 100, 100)}%` }}
+                        className={`meter-bar-fill ${runState.meters.network_attempts > 0 ? 'red' : 'green'}`}
+                        style={{ width: `${Math.min(runState.meters.network_attempts * 100, 100)}%` }}
                       />
                     </div>
                   </div>
@@ -594,12 +868,12 @@ export const CavrModule: React.FC = () => {
                   <div className="meter-item">
                     <div className="meter-label-row">
                       <span>Writes Outside Scratch</span>
-                      <strong>{meters.writes_outside_scratch}</strong>
+                      <strong>{runState.meters.writes_outside_scratch}</strong>
                     </div>
                     <div className="meter-bar-track">
                       <div 
-                        className={`meter-bar-fill ${meters.writes_outside_scratch > 0 ? 'red' : 'green'}`}
-                        style={{ width: `${Math.min(meters.writes_outside_scratch * 100, 100)}%` }}
+                        className={`meter-bar-fill ${runState.meters.writes_outside_scratch > 0 ? 'red' : 'green'}`}
+                        style={{ width: `${Math.min(runState.meters.writes_outside_scratch * 100, 100)}%` }}
                       />
                     </div>
                   </div>
@@ -607,12 +881,12 @@ export const CavrModule: React.FC = () => {
                   <div className="meter-item">
                     <div className="meter-label-row">
                       <span>Processes Spawned</span>
-                      <strong>{meters.processes_spawned}</strong>
+                      <strong>{runState.meters.processes_spawned}</strong>
                     </div>
                     <div className="meter-bar-track">
                       <div 
-                        className={`meter-bar-fill ${meters.processes_spawned > 0 ? 'amber' : 'green'}`}
-                        style={{ width: `${Math.min(meters.processes_spawned * 50, 100)}%` }}
+                        className={`meter-bar-fill ${runState.meters.processes_spawned > 0 ? 'amber' : 'green'}`}
+                        style={{ width: `${Math.min(runState.meters.processes_spawned * 50, 100)}%` }}
                       />
                     </div>
                   </div>
@@ -620,27 +894,26 @@ export const CavrModule: React.FC = () => {
                   <div className="meter-item">
                     <div className="meter-label-row">
                       <span>Secrets Touched</span>
-                      <strong>{meters.secrets_touched}</strong>
+                      <strong>{runState.meters.secrets_touched}</strong>
                     </div>
                     <div className="meter-bar-track">
                       <div 
-                        className={`meter-bar-fill ${meters.secrets_touched > 0 ? 'red' : 'green'}`}
-                        style={{ width: `${Math.min(meters.secrets_touched * 100, 100)}%` }}
+                        className={`meter-bar-fill ${runState.meters.secrets_touched > 0 ? 'red' : 'green'}`}
+                        style={{ width: `${Math.min(runState.meters.secrets_touched * 100, 100)}%` }}
                       />
                     </div>
                   </div>
                 </div>
 
-                {/* Honeytoken Indicator */}
-                <div className={`honeytoken-indicator-box ${honeytokenFlashing ? 'flashing-alert' : ''}`}>
+                <div className={`honeytoken-indicator-box ${runState.honeytokenFlashing ? 'flashing-alert' : ''}`}>
                   <div className="indicator-icon">
                     <ShieldAlert size={18} />
                   </div>
                   <div>
                     <strong>Honeytoken Secret Trap</strong>
                     <p>
-                      {honeytokenFlashing
-                        ? 'CRITICAL ALERT: Fake AWS credentials file read by package!'
+                      {runState.honeytokenFlashing
+                        ? 'CRITICAL ALERT: Synthetic AWS credentials read by package!'
                         : 'Trap active at ~/.aws/credentials. Awaiting access attempts.'}
                     </p>
                   </div>
@@ -649,90 +922,9 @@ export const CavrModule: React.FC = () => {
             </div>
           </div>
         )}
-
-        {/* VERDICT CARD */}
-        {verdictData && (
-          <div className={`verdict-card-container ${verdictData.verdict.toLowerCase()}`}>
-            <div className="verdict-banner-row">
-              <div className="verdict-status-block">
-                {verdictData.verdict === 'ALLOW' && <CheckCircle2 size={32} className="v-icon good" />}
-                {verdictData.verdict === 'BLOCK' && <XCircle size={32} className="v-icon bad" />}
-                {verdictData.verdict === 'NEEDS_REVIEW' && <AlertTriangle size={32} className="v-icon warn" />}
-                <div>
-                  <span className="verdict-tag">ASSURANCE GATE VERDICT</span>
-                  <h3 className="verdict-heading">{verdictData.verdict}</h3>
-                </div>
-              </div>
-
-              <div className="verdict-honesty-note">
-                <span className="honesty-title">Honesty Rule Statement:</span>
-                <p>{verdictData.honesty_wording}</p>
-              </div>
-            </div>
-
-            {/* Evidence Lines */}
-            <div className="verdict-evidence-list">
-              <strong>Verified Evidence Lines:</strong>
-              <ul>
-                {verdictData.evidence_lines?.map((line: string, idx: number) => (
-                  <li key={idx}>{line}</li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Alternative Recommendation if BLOCKED */}
-            {verdictData.verdict === 'BLOCK' && verdictData.alternative_package && (
-              <div className="alternative-package-card">
-                <div className="alt-top-row">
-                  <div className="alt-title-wrap">
-                    <span className="alt-badge">SAFE ALTERNATIVE RECOMMENDED</span>
-                    <h4>
-                      {verdictData.alternative_package.package} <code>v{verdictData.alternative_package.version}</code>
-                    </h4>
-                  </div>
-                  <span className="alt-confidence">
-                    {verdictData.alternative_package.confidence}
-                  </span>
-                </div>
-
-                <p className="alt-reason">{verdictData.alternative_package.reason}</p>
-                
-                <div className="alt-capabilities">
-                  <span>Capabilities:</span> <code>{verdictData.alternative_package.capabilities}</code>
-                </div>
-
-                <div className="alt-action-bar">
-                  <span className="alt-human-notice">
-                    <Lock size={13} /> Requires explicit human approval. Never auto-installed.
-                  </span>
-
-                  <div className="alt-buttons">
-                    <button 
-                      className={`alt-btn approve ${alternativeDecision === 'approved' ? 'selected' : ''}`}
-                      onClick={() => handleAlternativeChoice(true)}
-                      disabled={alternativeDecision !== 'pending'}
-                    >
-                      <ThumbsUp size={14} />
-                      <span>{alternativeDecision === 'approved' ? 'Approved & Logged' : 'Approve Alternative'}</span>
-                    </button>
-
-                    <button 
-                      className={`alt-btn reject ${alternativeDecision === 'rejected' ? 'selected' : ''}`}
-                      onClick={() => handleAlternativeChoice(false)}
-                      disabled={alternativeDecision !== 'pending'}
-                    >
-                      <ThumbsDown size={14} />
-                      <span>{alternativeDecision === 'rejected' ? 'Rejected & Quarantined' : 'Reject'}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* DIALOG 1: CACHE DIALOG */}
+      {/* DIALOG 1: ENRICHED CACHE DIALOG */}
       {showCacheDialog && (
         <div className="modal-backdrop" onClick={() => setShowCacheDialog(false)}>
           <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
@@ -745,263 +937,249 @@ export const CavrModule: React.FC = () => {
               <button className="modal-close-btn" onClick={() => setShowCacheDialog(false)}>✕</button>
             </div>
 
+            {/* Note on Cache Hit vs Mismatch */}
+            <div className="dialog-note-banner">
+              <Info size={14} className="text-cyan-400" />
+              <span>
+                <strong>Cache Hit vs. Hash Mismatch:</strong> A Cache Hit skips hostile sandbox analysis because the package name and exact SHA-256 match pre-verified records. A Hash Mismatch indicates artifact bytes were modified or poisoned, triggering mandatory quarantine.
+              </span>
+            </div>
+
+            {/* Search input */}
+            <div className="dialog-search-row">
+              <Search size={14} className="text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Search packages by name or declared capabilities..." 
+                value={cacheSearch}
+                onChange={(e) => setCacheSearch(e.target.value)}
+                className="dialog-search-input"
+              />
+            </div>
+
             <div className="modal-table-scroll">
               <table className="cache-table">
                 <thead>
                   <tr>
-                    <th>Package</th>
+                    <th>Package Name</th>
                     <th>Version</th>
-                    <th>SHA-256 Hash</th>
-                    <th>Capabilities</th>
+                    <th>SHA-256 Digest</th>
+                    <th>Capabilities Scope</th>
+                    <th>Source</th>
                     <th>Status</th>
+                    <th>Verification</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {packages.map((pkg, idx) => (
-                    <tr key={idx}>
+                  {filteredPackages.map((pkg) => (
+                    <tr key={`${pkg.name}-${pkg.version}`}>
                       <td><strong>{pkg.name}</strong></td>
                       <td><code>{pkg.version}</code></td>
                       <td>
-                        <div className="hash-copy-cell">
-                          <code>{pkg.sha256.slice(0, 16)}...</code>
-                          <button 
-                            className="copy-btn"
-                            onClick={() => copyToClipboard(pkg.sha256, pkg.name)}
-                            title="Click to copy full SHA-256 hash"
-                          >
-                            {copiedHash === pkg.name ? <Check size={12} className="text-green" /> : <Copy size={12} />}
-                          </button>
-                        </div>
+                        <button 
+                          className="hash-copy-btn" 
+                          onClick={() => copyToClipboard(pkg.sha256, `${pkg.name}-${pkg.version}`)}
+                          title="Click to copy full SHA-256 hash"
+                        >
+                          <code>{pkg.sha256.substring(0, 16)}...</code>
+                          {copiedHash === `${pkg.name}-${pkg.version}` ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        </button>
                       </td>
-                      <td><small>{pkg.capabilities}</small></td>
-                      <td><span className="status-pill trusted">{pkg.status}</span></td>
+                      <td><span className="cap-pill">{pkg.capabilities}</span></td>
+                      <td>{pkg.source}</td>
+                      <td><span className="status-badge trusted">{pkg.status}</span></td>
+                      <td>
+                        <button 
+                          className={`reverify-btn ${reverifiedRows[pkg.name] ? 'verified' : ''}`}
+                          onClick={() => reverifyHashRow(pkg.name)}
+                        >
+                          {reverifiedRows[pkg.name] ? <Check size={11} /> : <RefreshCw size={11} />}
+                          <span>{reverifiedRows[pkg.name] ? 'Matches' : 'Re-verify'}</span>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
-            <div className="modal-bottom-bar">
-              <span className="table-count-note">{packages.length} packages pinned in SQLite trusted_packages table</span>
-              <button className="btn-secondary" onClick={() => setShowCacheDialog(false)}>Close</button>
-            </div>
           </div>
         </div>
       )}
 
-      {/* DIALOG 2: ACTION DIALOG */}
+      {/* DIALOG 2: ENRICHED ACTION DIALOG */}
       {showActionDialog && (
         <div className="modal-backdrop" onClick={() => setShowActionDialog(false)}>
           <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="modal-top">
               <div>
-                <span className="modal-eyebrow">ACTION BOX · STATIC INSPECTION</span>
-                <h3>Deep Python AST Inspection &amp; Anomaly Detection</h3>
-                <p>Lexical parsing, dangerous primitive detection, and typosquatting analysis.</p>
+                <span className="modal-eyebrow">STATIC AST INSPECTOR &amp; POLICY REASONING</span>
+                <h3>Action Box: Rules Catalogue &amp; Priority Formula</h3>
+                <p>Inspection rules, trigger scoring, and the 4 policy outcome states.</p>
               </div>
               <button className="modal-close-btn" onClick={() => setShowActionDialog(false)}>✕</button>
             </div>
 
-            <div className="modal-body-content">
-              <div className="inspection-steps-grid">
-                <div className="step-card">
-                  <div className="step-num">01</div>
-                  <strong>AST Dynamic Execution</strong>
-                  <p>Catches eval(), exec(), and dynamic __import__() calls used for payload hiding.</p>
-                </div>
-
-                <div className="step-card">
-                  <div className="step-num">02</div>
-                  <strong>Process &amp; Sockets</strong>
-                  <p>Flags os.system, subprocess.Popen, and raw socket.socket connections.</p>
-                </div>
-
-                <div className="step-card">
-                  <div className="step-num">03</div>
-                  <strong>Obfuscated Staging</strong>
-                  <p>Detects base64 encoded strings, hex decoders, and reversed shell payloads.</p>
-                </div>
-
-                <div className="step-card">
-                  <div className="step-num">04</div>
-                  <strong>Setup.py Install Hooks</strong>
-                  <p>Checks for custom cmdclass overrides and install-time backdoor triggers.</p>
-                </div>
-
-                <div className="step-card">
-                  <div className="step-num">05</div>
-                  <strong>Typosquatting &amp; Homoglyphs</strong>
-                  <p>Levenshtein distance comparison against trusted names (e.g. reqeusts vs requests).</p>
-                </div>
-
-                <div className="step-card">
-                  <div className="step-num">06</div>
-                  <strong>Metadata Sanity</strong>
-                  <p>Flags version jumps (&gt;90), missing licenses, and unpinned direct git dependencies.</p>
-                </div>
-              </div>
-
-              <div className="outcomes-section">
-                <h4>Three Deterministic Outcomes:</h4>
-                <div className="outcomes-row">
-                  <div className="outcome-pill good">
-                    <strong>ALLOW</strong>
-                    <span>Clean syntax tree, no suspicious sinks, legitimate metadata</span>
-                  </div>
-                  <div className="outcome-pill warn">
-                    <strong>NEEDS_REVIEW</strong>
-                    <span>Medium severity anomalies (e.g. missing license or undeclared minor flags)</span>
-                  </div>
-                  <div className="outcome-pill bad">
-                    <strong>BLOCK</strong>
-                    <span>Critical finding (eval/exec, subprocess, typosquatting, or honeytoken exfil)</span>
-                  </div>
+            {/* Live Typosquat Demo Field */}
+            <div className="dialog-interactive-card">
+              <h6>Interactive Typosquatting &amp; Homoglyph Detector</h6>
+              <p>Type a package name to calculate edit distance against trusted packages:</p>
+              <div className="typo-input-row">
+                <input 
+                  type="text" 
+                  value={demoInput} 
+                  onChange={(e) => setDemoInput(e.target.value)} 
+                  className="demo-text-input" 
+                  placeholder="Try 'reqeusts' or 'collorama'..."
+                />
+                <div className="demo-result">
+                  {packages.some(p => p.name === demoInput) ? (
+                    <span className="text-emerald-400 font-semibold"><CheckCircle2 size={13} className="inline mr-1" /> Matches Trusted Package</span>
+                  ) : packages.some(p => Math.abs(p.name.length - demoInput.length) <= 2 && (p.name.includes(demoInput.slice(0, 4)) || demoInput.includes(p.name.slice(0, 4)))) ? (
+                    <span className="text-red-400 font-semibold"><AlertTriangle size={13} className="inline mr-1" /> High Risk: Suspicious Typosquat / Homoglyph Detected</span>
+                  ) : (
+                    <span className="text-gray-400">Unmatched dependency name</span>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="modal-bottom-bar">
-              <span className="table-count-note">Deterministic Python AST parser active</span>
-              <button className="btn-secondary" onClick={() => setShowActionDialog(false)}>Close</button>
+            {/* Trigger Priority Formula with Worked Example */}
+            <div className="dialog-interactive-card">
+              <h6>Trigger Priority Formula Explained</h6>
+              <code>priority = (sink_risk × reachability_confidence × novelty) / estimated_run_cost</code>
+              <div className="worked-example-box">
+                <strong>Worked Example:</strong> In <code>dormant-exfil</code>, <code>os.getenv("AWS_SECRET_ACCESS_KEY")</code> reaches <code>socket.connect</code>:
+                <p className="mt-1 font-mono text-cyan-300">
+                  (Sink Risk: 9.5 × Confidence: 0.95 × Novelty: 1.0) / Cost: 1.2s = <strong>7.52 Priority Score</strong> (Rank #1)
+                </p>
+              </div>
+            </div>
+
+            {/* 4 Policy States */}
+            <div className="dialog-interactive-card">
+              <h6>The 4 Policy States</h6>
+              <div className="four-states-grid">
+                <div className="state-box verified">
+                  <strong>VERIFIED (ALLOW)</strong>
+                  <p>No malicious behavior observed under our tests. Contract satisfied.</p>
+                </div>
+                <div className="state-box restricted">
+                  <strong>RESTRICTED (ALLOW with restrictions)</strong>
+                  <p>Permitted under narrowed capability boundary (seccomp syscall filter applied).</p>
+                </div>
+                <div className="state-box unresolved">
+                  <strong>UNRESOLVED (NEEDS_REVIEW)</strong>
+                  <p>Fails closed. Ambiguous predicates or execution budget exhausted.</p>
+                </div>
+                <div className="state-box rejected">
+                  <strong>REJECTED (BLOCK)</strong>
+                  <p>Decisive capability violation, credential exfiltration, or denylist match detected.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* DIALOG 3: ENVIRONMENT CHECKING DIALOG */}
+      {/* DIALOG 3: ENRICHED ENVIRONMENT DIALOG */}
       {showEnvDialog && (
         <div className="modal-backdrop" onClick={() => setShowEnvDialog(false)}>
           <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="modal-top">
               <div>
-                <span className="modal-eyebrow">ENVIRONMENT BOX · HOSTILE CODE SANDBOX</span>
-                <h3>Docker Sandbox Architecture &amp; Lockdown Controls</h3>
-                <p>Disposable containerized testbed enforcing isolation, honeytoken detection, and syscall tracking.</p>
+                <span className="modal-eyebrow">CONTAINER ISOLATION SPECIFICATION</span>
+                <h3>Environment: Multi-Layer Hostile Code Sandbox</h3>
+                <p>Disposable Docker isolation parameters, synthesized conditions, and explicit bounds.</p>
               </div>
               <button className="modal-close-btn" onClick={() => setShowEnvDialog(false)}>✕</button>
             </div>
 
-            <div className="modal-body-content">
-              {/* Dockerfile Summary */}
-              <div className="sandbox-info-panel">
-                <h4>Dockerfile Summary (asent-sandbox)</h4>
-                <div className="docker-summary-grid">
-                  <div><strong>Base Image:</strong> <code>python:3.12-slim</code></div>
-                  <div><strong>User:</strong> <code>sandbox (UID: 10001, unprivileged non-root)</code></div>
-                  <div><strong>Observation:</strong> <code>sys.addaudithook + optional strace syscall tracer</code></div>
-                  <div><strong>Harness Path:</strong> <code>/opt/asent/harness.py</code></div>
-                </div>
-              </div>
-
-              {/* Lockdown Flags */}
-              <div className="flags-section">
-                <h4>Lockdown Command Flags:</h4>
-                <div className="flags-list">
-                  <div className="flag-row">
-                    <code>--network none</code>
-                    <span>Network is severed; no outbound connections or exfiltration possible.</span>
-                  </div>
-                  <div className="flag-row">
-                    <code>--read-only</code>
-                    <span>Root filesystem is read-only; no system files can be modified or written to.</span>
-                  </div>
-                  <div className="flag-row">
-                    <code>--tmpfs /scratch:rw,noexec,nosuid,size=64m</code>
-                    <span>Disposable in-memory storage only; execution from scratch is disabled.</span>
-                  </div>
-                  <div className="flag-row">
-                    <code>--user 10001:10001 --cap-drop ALL</code>
-                    <span>Drops all Linux capabilities; prevents privilege escalation.</span>
-                  </div>
-                  <div className="flag-row">
-                    <code>--security-opt no-new-privileges --security-opt seccomp=asent-seccomp.json</code>
-                    <span>Applies strict seccomp system call filtering.</span>
-                  </div>
-                  <div className="flag-row">
-                    <code>--pids-limit 64 --memory 256m --cpus 0.5</code>
-                    <span>Hard resource limits against fork bombs and compute exhaustion.</span>
-                  </div>
-                  <div className="flag-row">
-                    <code>timeout 30s</code>
-                    <span>Strict watchdog timeout terminating stalled or hostile loops.</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tests Run & Limitations */}
-              <div className="limitations-card">
-                <h4>Honest Limitations Notice:</h4>
-                <p>
-                  ALLOW is worded as <strong>&ldquo;No malicious behavior observed under our tests&rdquo;</strong>. 
-                  It never claims &ldquo;proven safe&rdquo;, acknowledging that bounded execution cannot guarantee 
-                  safety against arbitrary unexercised logic.
-                </p>
+            {/* Dockerfile Summary */}
+            <div className="dialog-interactive-card">
+              <h6>Dockerfile Summary &amp; Hardened Stack</h6>
+              <div className="docker-summary-grid">
+                <div><span>Base Image:</span> <code>python:3.12-slim</code></div>
+                <div><span>Execution User:</span> <code>sandbox (UID 10001, unprivileged)</code></div>
+                <div><span>Observation Layer:</span> <code>sys.addaudithook + seccomp</code></div>
+                <div><span>Harness Path:</span> <code>/opt/asent/harness.py</code></div>
               </div>
             </div>
 
-            <div className="modal-bottom-bar">
-              <span className="table-count-note">Hostile code execution sandbox specification</span>
-              <button className="btn-secondary" onClick={() => setShowEnvDialog(false)}>Close</button>
+            {/* Synthesizable Counterfactual Conditions */}
+            <div className="dialog-interactive-card">
+              <h6>Counterfactual Conditions Engine Can Synthesize</h6>
+              <ul className="conditions-synth-list">
+                <li><strong>Fake Environment Variables:</strong> Synthesizes fake AWS keys (<code>AWS_SECRET_ACCESS_KEY</code>), production flags (<code>PROD=1</code>), or CI flags (<code>CI=true</code>).</li>
+                <li><strong>Fake Filesystem Objects:</strong> Places dummy credential honeytokens at <code>~/.aws/credentials</code> and <code>~/.ssh/id_rsa</code>.</li>
+                <li><strong>Spoofed Hostname &amp; User:</strong> Spoofs <code>socket.gethostname()</code> and <code>getpass.getuser()</code> to awaken environment-targeted payloads.</li>
+                <li><strong>Harness Time Shim:</strong> Warps time comparisons and skips delay sleep calls to test time-bombed payloads safely.</li>
+              </ul>
+            </div>
+
+            {/* Explicit Limitations Section */}
+            <div className="dialog-interactive-card limitation-card">
+              <h6><AlertTriangle size={14} className="inline mr-1 text-amber-400" /> Explicit Limitations &amp; Honesty Bounds</h6>
+              <ul className="limitations-list">
+                <li><strong>Bounded Isolation:</strong> Isolation is bounded to declared container mechanisms. eBPF kernel tracing is not accessible in rootless contexts.</li>
+                <li><strong>Finite Test Paths:</strong> Conditions not triggered during exploration stay unresolved.</li>
+                <li><strong>No Claim of Universal Absence:</strong> Under our honesty rule, an ALLOW outcome is always presented as <em>"No malicious behavior observed under our tests"</em>. It never claims "proven safe".</li>
+              </ul>
             </div>
           </div>
         </div>
       )}
 
-      {/* PROOF DRAWER MODAL */}
-      {showProofDrawer && proofData && (
+      {/* PROOF DRAWER */}
+      {showProofDrawer && runState.proofData && (
         <div className="modal-backdrop" onClick={() => setShowProofDrawer(false)}>
-          <div className="modal-sheet proof-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-top">
+          <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="drawer-top">
               <div>
-                <span className="modal-eyebrow">AUDIT &amp; EXECUTION EVIDENCE</span>
-                <h3>Proof Drawer: Exact Execution Parameters</h3>
-                <p>Answers the question: &ldquo;What did you actually run?&rdquo;</p>
+                <span className="modal-eyebrow">FORENSIC AUDIT RECORD</span>
+                <h3>Cryptographic Proof Drawer</h3>
+                <p>Reproducible container command, digests, and per-run evidence chain.</p>
               </div>
               <button className="modal-close-btn" onClick={() => setShowProofDrawer(false)}>✕</button>
             </div>
 
-            <div className="modal-body-content">
-              <div className="proof-field">
-                <span className="p-label">EXACT DOCKER RUN COMMAND:</span>
-                <pre className="proof-code-box">{proofData.docker_command}</pre>
+            <div className="drawer-content-scroll">
+              <div className="proof-group">
+                <label>Exact Docker Run Command:</label>
+                <pre className="proof-code"><code>{runState.proofData.docker_command}</code></pre>
               </div>
 
-              <div className="proof-kv-grid">
-                <div>
-                  <span className="p-label">CONTAINER ID:</span>
-                  <code>{proofData.container_id}</code>
-                </div>
-                <div>
-                  <span className="p-label">IMAGE DIGEST:</span>
-                  <code>{proofData.image_digest}</code>
-                </div>
-                <div>
-                  <span className="p-label">RUN ID:</span>
-                  <code>{proofData.run_id}</code>
-                </div>
-                <div>
-                  <span className="p-label">HASH COMPARISON:</span>
-                  <code>{proofData.hash_comparison?.matches ? 'MATCH (Valid)' : 'MISMATCH (Tampered)'}</code>
+              <div className="proof-group">
+                <label>Container ID &amp; Image Digest:</label>
+                <div className="proof-kv">
+                  <div><span>Container ID:</span> <code>{runState.proofData.container_id}</code></div>
+                  <div><span>Image Digest:</span> <code>{runState.proofData.image_digest}</code></div>
                 </div>
               </div>
 
-              <div className="proof-field">
-                <span className="p-label">DOWNLOADABLE EVIDENCE JSON:</span>
-                <pre className="proof-json-box">
-                  {JSON.stringify(proofData.evidence_json, null, 2)}
-                </pre>
+              <div className="proof-group">
+                <label>Cryptographic Hash Comparison:</label>
+                <div className="proof-kv">
+                  <div><span>Actual Artifact SHA-256:</span> <code>{runState.proofData.hash_comparison?.actual_sha256}</code></div>
+                  <div><span>Hash Match:</span> <strong className="text-emerald-400">VERIFIED MATCH</strong></div>
+                </div>
               </div>
-            </div>
 
-            <div className="modal-bottom-bar">
-              <a 
-                className="btn-primary"
-                href={`data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(proofData.evidence_json, null, 2))}`}
-                download={`ASENT_evidence_${proofData.run_id}.json`}
-              >
-                <Download size={14} /> Download Evidence JSON
-              </a>
-              <button className="btn-secondary" onClick={() => setShowProofDrawer(false)}>Close</button>
+              <div className="proof-group">
+                <label>Counterfactual Container Runs ({runState.proofData.counterfactual_runs?.length || 1}):</label>
+                <div className="cf-proof-list">
+                  {runState.proofData.counterfactual_runs?.map((r: any) => (
+                    <div key={r.run_number} className="cf-proof-item">
+                      <strong>Run {r.run_number}: {r.condition_applied?.name}</strong>
+                      <span>Behaviors: {r.behaviors_found?.map((b: any) => b.action).join(', ') || 'Clean'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="proof-group">
+                <label>Merkle Evidence Root Digest:</label>
+                <code className="proof-code">{runState.proofData.evidence_chain_root}</code>
+              </div>
             </div>
           </div>
         </div>

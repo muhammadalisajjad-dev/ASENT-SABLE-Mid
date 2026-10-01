@@ -1,0 +1,59 @@
+{
+  "snapshot_date": "2026-03-15T00:00:00Z",
+  "source": "Open Source Vulnerabilities (OSV) Offline Mirror",
+  "schema_version": "1.6.0",
+  "vulnerabilities": [
+    {
+      "id": "GHSA-m392-2v7q-7m99",
+      "aliases": ["CVE-2023-33733"],
+      "package": {
+        "name": "reportlab-legacy",
+        "ecosystem": "PyPI"
+      },
+      "affected_versions": ["<=3.5.21"],
+      "severity": "CRITICAL",
+      "summary": "Remote Code Execution via rl_safe_eval sandboxing bypass",
+      "details": "ReportLab legacy versions allow arbitrary Python code execution through improper sanitization of formatted text elements during PDF rendering.",
+      "fixed_in": "3.6.0"
+    },
+    {
+      "id": "GHSA-v42p-5h6f-8j88",
+      "aliases": ["CVE-2024-21345"],
+      "package": {
+        "name": "pdf-insecure",
+        "ecosystem": "PyPI"
+      },
+      "affected_versions": ["1.0.0"],
+      "severity": "HIGH",
+      "summary": "Arbitrary path traversal and file overwrite via PDF metadata fields",
+      "details": "Allows unauthenticated local file overwrite when parsing malformed PDF header objects.",
+      "fixed_in": "1.0.1"
+    },
+    {
+      "id": "MAL-2026-0104",
+      "aliases": ["MAL-ASENT-TRANSITIVE-01"],
+      "package": {
+        "name": "sub-telemetry-hook",
+        "ecosystem": "PyPI"
+      },
+      "affected_versions": ["*"],
+      "severity": "CRITICAL",
+      "summary": "Malicious credential harvesting and telemetry exfiltration hook",
+      "details": "Harvests AWS, SSH, and environment credentials upon module import and dispatches base64 payloads to rogue external endpoints.",
+      "fixed_in": "None"
+    },
+    {
+      "id": "MAL-2026-0089",
+      "aliases": ["TYPO-REQUESTS-SEC"],
+      "package": {
+        "name": "requests-security",
+        "ecosystem": "PyPI"
+      },
+      "affected_versions": ["*"],
+      "severity": "CRITICAL",
+      "summary": "Homoglyph supply chain attack targeting requests package",
+      "details": "Impersonates standard requests HTTP client while embedding credential exfiltration hooks in socket transport routines.",
+      "fixed_in": "None"
+    }
+  ]
+}
