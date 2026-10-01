@@ -1,126 +1,1043 @@
-import React, { useState } from 'react';
-import { Network, ShieldCheck, AlertTriangle, ArrowRight, CheckCircle2, Lock, FileCode2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Database, Shield, Cpu, CheckCircle2, XCircle, AlertTriangle,
+  Terminal, Play, RefreshCw, Eye, EyeOff, Info, Lock,
+  ArrowRight, ChevronDown, ChevronRight, Copy, Check, Upload
+} from 'lucide-react';
+
+import { SableRunState, INITIAL_STATE, STEP_NAMES, STEP_PHASES, STEP_SUBSTEPS, VERDICT_COLORS, VERDICT_BG } from './sable/types';
+import { OverviewTab } from './sable/tabs/Overview';
+import { SpecificationTab } from './sable/tabs/Specification';
+import { TerraformDiffTab } from './sable/tabs/TerraformDiff';
+import { ResourceGraphTab } from './sable/tabs/ResourceGraph';
+import { CorrespondenceTab } from './sable/tabs/Correspondence';
+import { ProjectionTab } from './sable/tabs/Projection';
+import { VerificationTab } from './sable/tabs/Verification';
+import { DecisionTab } from './sable/tabs/Decision';
+import { BenchmarkTab } from './sable/tabs/Benchmark';
+import { AblationsKillTestsTab } from './sable/tabs/AblationsKillTests';
+import { EvidenceTab } from './sable/tabs/Evidence';
+
+interface Scenario {
+  id: string;
+  name: string;
+  family: string;
+  is_hard_case: boolean;
+  notes: string;
+}
+
+const EVIDENCE_TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'specification', label: 'Specification' },
+  { id: 'diff', label: 'Terraform Diff' },
+  { id: 'graph', label: 'Resource Graph' },
+  { id: 'correspondence', label: 'Correspondence' },
+  { id: 'projection', label: 'Projection' },
+  { id: 'verification', label: 'Verification' },
+  { id: 'decision', label: 'Decision' },
+  { id: 'benchmark', label: 'Benchmark' },
+  { id: 'ablations', label: 'Ablations & Kill Tests' },
+  { id: 'evidence', label: 'Evidence' },
+];
+
+const LIFECYCLE_STAGES = ['Loaded', 'Normalized', 'Modeled', 'Matched', 'Projected', 'Verified', 'Decided'];
+
+// STEP_INDEX to lifecycle stage map
+const STEP_TO_LIFECYCLE: Record<number, number> = { 0: 0, 1: 0, 2: 1, 3: 3, 4: 4, 5: 5, 6: 6, 7: 6 };
 
 export const SableModule: React.FC = () => {
-  const [selectedScenario, setSelectedScenario] = useState<'preserved' | 'widened' | 'regressed'>('preserved');
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [selectedScenario, setSelectedScenario] = useState<string>('rename_with_moved');
+  const [isRunning, setIsRunning] = useState(false);
+  const [runState, setRunState] = useState<SableRunState>(INITIAL_STATE);
+  const [activeEvidenceTab, setActiveEvidenceTab] = useState('overview');
+  const [unlockedTabs, setUnlockedTabs] = useState<Set<string>>(new Set(['overview', 'specification', 'benchmark', 'ablations']));
+  const [newTabAlerts, setNewTabAlerts] = useState<Record<string, boolean>>({});
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
+  const [explainSimply, setExplainSimply] = useState(false);
+  const [showProofDrawer, setShowProofDrawer] = useState(false);
+  const [rerunDeterminismResult, setRerunDeterminismResult] = useState<any>(null);
+  const [isVerifyingDeterminism, setIsVerifyingDeterminism] = useState(false);
+
+  // Dialog states
+  const [showBaselineDialog, setShowBaselineDialog] = useState(false);
+  const [showEnvDialog, setShowEnvDialog] = useState(false);
+  const [showActionDialog, setShowActionDialog] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [uploadBaselineText, setUploadBaselineText] = useState('');
+  const [uploadCandidateText, setUploadCandidateText] = useState('');
+  const [baselineCopied, setBaselineCopied] = useState(false);
+  const [baselineDialogData, setBaselineDialogData] = useState<any>(null);
+  const [envDialogData, setEnvDialogData] = useState<any>(null);
+  const [actionDialogData, setActionDialogData] = useState<any>(null);
+  const [activeBoxGlow, setActiveBoxGlow] = useState<'none' | 'baseline' | 'env' | 'action'>('none');
+
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Load scenarios
+  useEffect(() => {
+    fetch('/api/sable/scenarios').then(r => r.json()).then(setScenarios).catch(() => {});
+  }, []);
+
+  // Load dialog data
+  useEffect(() => {
+    fetch('/api/sable/dialog/baseline').then(r => r.json()).then(setBaselineDialogData).catch(() => {});
+    fetch('/api/sable/dialog/environment').then(r => r.json()).then(setEnvDialogData).catch(() => {});
+    fetch('/api/sable/dialog/action').then(r => r.json()).then(setActionDialogData).catch(() => {});
+  }, []);
+
+  // Auto-scroll terminal
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [runState.terminalLogs]);
+
+  const unlockTab = (tab: string) => {
+    setUnlockedTabs(prev => new Set([...prev, tab]));
+    setNewTabAlerts(prev => ({ ...prev, [tab]: true }));
+    setTimeout(() => setNewTabAlerts(prev => ({ ...prev, [tab]: false })), 3000);
+  };
+
+  const runScenario = async () => {
+    if (isRunning) return;
+    setIsRunning(true);
+    setRunState({ ...INITIAL_STATE, scenarioId: selectedScenario });
+    setActiveEvidenceTab('overview');
+    setUnlockedTabs(new Set(['overview', 'specification', 'benchmark']));
+    setNewTabAlerts({});
+    setExpandedStep(null);
+    setActiveBoxGlow('none');
+    setShowProofDrawer(false);
+
+    // Close any existing SSE
+    eventSourceRef.current?.close();
+
+    try {
+      const res = await fetch('/api/sable/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario_id: selectedScenario, obligation_id: 'S3-APPROLE-CUSTOMERDATA' })
+      });
+
+      if (!res.ok) {
+        setIsRunning(false);
+        return;
+      }
+
+      const { run_id, stream_url } = await res.json();
+
+      // Update run state with run ID
+      setRunState(prev => ({ ...prev, runId: run_id }));
+
+      // Connect to SSE
+      const es = new EventSource(stream_url);
+      eventSourceRef.current = es;
+
+      es.onmessage = (event) => {
+        try {
+          const ev = JSON.parse(event.data);
+          handlePipelineEvent(ev, run_id);
+        } catch { /* ignore */ }
+      };
+
+      es.onerror = () => {
+        es.close();
+        setIsRunning(false);
+      };
+
+    } catch {
+      setIsRunning(false);
+    }
+  };
+
+  const handlePipelineEvent = (ev: any, runId: string) => {
+    const payload = ev.payload ?? ev.data ?? {};
+    const stepIndex = ev.step_index ?? payload.step_index ?? 0;
+    const type = ev.type;
+    const logs: string[] = payload.logs ?? [];
+
+    setRunState(prev => {
+      const next = { ...prev };
+
+      // Terminal logs
+      if (logs.length > 0) {
+        next.terminalLogs = [...prev.terminalLogs, ...logs.filter((l: string) => !prev.terminalLogs.includes(l))];
+      }
+
+      // Step progress
+      next.stepIndex = stepIndex;
+
+      // Meter updates
+      if (payload.hypotheses) {
+        next.hypotheses = payload.hypotheses;
+        next.meters = {
+          ...prev.meters,
+          hypotheses_generated: payload.hypotheses.length,
+          hypotheses_surviving: payload.hypotheses.filter((h: any) => h.score >= 6).length,
+          signals_collected: payload.hypotheses.reduce((sum: number, h: any) => sum + h.signals.length, 0),
+        };
+      }
+      if (payload.conflicts) {
+        next.conflicts = payload.conflicts;
+        next.meters = { ...next.meters, conflicts_found: payload.conflicts.length };
+      }
+
+      switch (type) {
+        case 'state_change':
+          if (stepIndex === 0) {
+            next.obligation = payload.obligation;
+          }
+          break;
+
+        case 'capture.complete':
+          next.baselineSha = payload.baseline_sha256;
+          next.candidateSha = payload.candidate_sha256;
+          next.diffLines = payload.diff_lines ?? [];
+          next.diff = payload.diff ?? '';
+          next.baselineResources = payload.baseline_files ?? [];
+          unlockTab('diff');
+          break;
+
+        case 'normalize.complete':
+          next.baselineResources = payload.baseline_resources ?? [];
+          next.candidateResources = payload.candidate_resources ?? [];
+          next.baselineGraph = payload.baseline_graph ?? null;
+          next.candidateGraph = payload.candidate_graph ?? null;
+          next.unsupportedConstructs = payload.unsupported_constructs ?? [];
+          unlockTab('graph');
+          break;
+
+        case 'obligation.loaded':
+          next.obligation = payload.obligation ?? payload;
+          next.baselineAuth = payload.baseline_auth ?? null;
+          unlockTab('specification');
+          break;
+
+        case 'obligation.baseline_failed':
+          next.verdict = 'UNKNOWN';
+          next.wording = payload.reason;
+          setActiveBoxGlow('baseline');
+          break;
+
+        case 'correspondence.scored':
+          next.hypotheses = payload.hypotheses ?? [];
+          next.conflicts = payload.conflicts ?? [];
+          unlockTab('correspondence');
+          break;
+
+        case 'correspondence.no_winner':
+          next.verdict = 'UNKNOWN';
+          next.correspondenceReason = payload.reason;
+          next.conflicts = payload.hypotheses ? [] : prev.conflicts;
+          break;
+
+        case 'projection.complete':
+          next.successor = payload.successor;
+          next.candidateAuth = payload.candidate_auth ?? null;
+          next.baselineAuth = payload.baseline_auth ?? prev.baselineAuth;
+          next.meters = { ...next.meters, policy_findings: (payload.candidate_auth?.widening?.length ?? 0) + (payload.candidate_auth?.weakening?.length ?? 0) };
+          next.uncertainty = payload.candidate_auth?.outside_model?.length > 0 ? 0.5 : 0;
+          unlockTab('projection');
+          break;
+
+        case 'verification.complete':
+          next.toolResults = payload.tool_results ?? {};
+          next.unsupportedConstructs = [...(next.unsupportedConstructs ?? []), ...(payload.unsupported_constructs ?? [])];
+          unlockTab('verification');
+          break;
+
+        case 'decision.attributed':
+          next.verdict = payload.verdict;
+          next.wording = payload.wording;
+          next.asent_mapping = payload.asent_mapping;
+          next.branchFired = payload.branch_fired;
+          next.failureMode = payload.failure_mode;
+          next.reviewerNote = payload.reviewer_note;
+          next.correspondenceReason = payload.correspondence_reason ?? prev.correspondenceReason;
+          next.candidateAuth = payload.auth_result ?? prev.candidateAuth;
+          if (payload.verdict === 'REGRESSED') setActiveBoxGlow('action');
+          unlockTab('decision');
+          break;
+
+        case 'run.complete':
+          next.verdict = payload.verdict;
+          next.wording = payload.wording;
+          next.asent_mapping = payload.asent_mapping;
+          next.decisionHash = payload.decision_hash;
+          next.evidence = payload.evidence ?? null;
+          next.baselines = payload.baselines ?? {};
+          setIsRunning(false);
+          eventSourceRef.current?.close();
+          unlockTab('evidence');
+          // Fetch proof
+          fetch(`/api/sable/proof/${runId}`).then(r => r.json()).then(d => {
+            setRunState(p => ({ ...p, proofData: d }));
+          }).catch(() => {});
+          break;
+      }
+
+      return next;
+    });
+  };
+
+  const sendAuditDecision = async (action: 'APPROVE' | 'REJECT') => {
+    if (!runState.runId) return;
+    await fetch(`/api/sable/audit/${runState.runId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, user: 'Security Operator (Admin)', reason: 'Human review decision' })
+    });
+  };
+
+  const handleRerunCustom = async (customCandidateTf: Record<string, string>) => {
+    if (isRunning) return;
+    setIsRunning(true);
+    setRunState({ ...INITIAL_STATE, scenarioId: selectedScenario });
+    setActiveEvidenceTab('diff');
+    setUnlockedTabs(new Set(['overview', 'specification', 'diff', 'benchmark', 'ablations']));
+    setNewTabAlerts({});
+    setExpandedStep(null);
+    setActiveBoxGlow('none');
+    setShowProofDrawer(false);
+    setRerunDeterminismResult(null);
+
+    eventSourceRef.current?.close();
+
+    try {
+      const res = await fetch('/api/sable/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario_id: selectedScenario,
+          obligation_id: 'S3-APPROLE-CUSTOMERDATA',
+          custom_candidate_tf: customCandidateTf
+        })
+      });
+
+      if (!res.ok) {
+        setIsRunning(false);
+        return;
+      }
+
+      const { run_id, stream_url } = await res.json();
+      setRunState(prev => ({ ...prev, runId: run_id }));
+
+      const es = new EventSource(stream_url);
+      eventSourceRef.current = es;
+
+      es.onmessage = (event) => {
+        try {
+          const ev = JSON.parse(event.data);
+          handlePipelineEvent(ev, run_id);
+        } catch { /* ignore */ }
+      };
+
+      es.onerror = () => {
+        es.close();
+        setIsRunning(false);
+      };
+    } catch {
+      setIsRunning(false);
+    }
+  };
+
+  const handleUploadRun = async () => {
+    if (isRunning || !uploadBaselineText || !uploadCandidateText) return;
+    setIsRunning(true);
+    setShowUploadDialog(false);
+    setRunState({ ...INITIAL_STATE, scenarioId: 'custom_upload' });
+    setActiveEvidenceTab('overview');
+    setUnlockedTabs(new Set(['overview', 'specification', 'benchmark', 'ablations']));
+    setNewTabAlerts({});
+    setExpandedStep(null);
+    setActiveBoxGlow('none');
+    setShowProofDrawer(false);
+    setRerunDeterminismResult(null);
+
+    eventSourceRef.current?.close();
+
+    try {
+      const res = await fetch('/api/sable/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario_id: 'custom_upload',
+          obligation_id: 'S3-APPROLE-CUSTOMERDATA',
+          baseline_files: { "main.tf": uploadBaselineText },
+          candidate_files: { "main.tf": uploadCandidateText }
+        })
+      });
+
+      if (!res.ok) {
+        setIsRunning(false);
+        return;
+      }
+
+      const { run_id, stream_url } = await res.json();
+      setRunState(prev => ({ ...prev, runId: run_id }));
+
+      const es = new EventSource(stream_url);
+      eventSourceRef.current = es;
+
+      es.onmessage = (event) => {
+        try {
+          const ev = JSON.parse(event.data);
+          handlePipelineEvent(ev, run_id);
+        } catch { /* ignore */ }
+      };
+
+      es.onerror = () => {
+        es.close();
+        setIsRunning(false);
+      };
+    } catch {
+      setIsRunning(false);
+    }
+  };
+
+  const handleVerifyDeterminism = async () => {
+    if (!runState.runId || isVerifyingDeterminism) return;
+    setIsVerifyingDeterminism(true);
+    try {
+      const res = await fetch(`/api/sable/runs/${runState.runId}/verify-determinism`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRerunDeterminismResult(data);
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setIsVerifyingDeterminism(false);
+    }
+  };
+
+  const lifecycleStage = runState.stepIndex >= 0 ? STEP_TO_LIFECYCLE[runState.stepIndex] ?? 0 : -1;
+
+  // Group scenarios by family
+  const families = [...new Set(scenarios.map(s => s.family))];
+
+  // Verdict color for current run
+  const verdictColor = runState.verdict ? VERDICT_COLORS[runState.verdict] ?? '#6b7280' : '#6b7280';
 
   return (
     <div className="sable-module-container">
+      {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="cavr-header-row">
         <div>
           <div className="cavr-eyebrow">
-            <span className="module-pulse-dot" /> SABLE MODULE · INFRASTRUCTURE SECURITY BOUNDARY ASSURANCE
+            <span className="module-pulse-dot"/> SABLE MODULE · INFRASTRUCTURE SECURITY BOUNDARY ASSURANCE
           </div>
           <h2 className="cavr-title">SABLE</h2>
           <p className="cavr-subtitle">
-            Terraform security-boundary assurance. Tracks cloud resource successor attribution, verifies 
-            least-privilege preservation across IAM role policies, and detects boundary regressions before 
-            infrastructure changes apply.
+            Did the least-privilege boundary follow the data after the refactor?
           </p>
+          <p className="sable-one-liner">
+            Terraform got restructured. We check whether the role that was allowed to touch the
+            customer-data bucket is still allowed on the same data, no more and no less.
+          </p>
+          <div className="sable-header-badges">
+            <span className="sable-badge-info"><Lock size={11}/> LLM in decision path: none</span>
+            <span className="sable-badge-info">Network OFF · Cloud OFF · Deterministic</span>
+          </div>
+        </div>
+        <div className="sable-header-actions">
+          <button
+            className={`cavr-explain-toggle ${explainSimply ? 'active' : ''}`}
+            onClick={() => setExplainSimply(e => !e)}
+          >
+            {explainSimply ? <EyeOff size={14}/> : <Eye size={14}/>}
+            {explainSimply ? 'Technical mode' : 'Explain simply'}
+          </button>
+          {runState.proofData && (
+            <button className="cavr-explain-toggle" onClick={() => setShowProofDrawer(p => !p)}>
+              Proof drawer
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="sable-scenario-picker">
-        <button 
-          className={`sable-pill ${selectedScenario === 'preserved' ? 'active' : ''}`}
-          onClick={() => setSelectedScenario('preserved')}
+      {/* ── Three top boxes ─────────────────────────────────────────── */}
+      <div className="cavr-top-boxes">
+        {/* Box 1: Baseline */}
+        <div
+          className={`cavr-info-box ${activeBoxGlow === 'baseline' ? 'active-glow' : ''}`}
+          onClick={() => setShowBaselineDialog(true)}
         >
-          <CheckCircle2 size={14} /> Preserved Least-Privilege
-        </button>
-        <button 
-          className={`sable-pill ${selectedScenario === 'widened' ? 'active' : ''}`}
-          onClick={() => setSelectedScenario('widened')}
+          <div className="info-box-icon"><Database size={20}/></div>
+          <div className="info-box-body">
+            <div className="info-box-title">Baseline</div>
+            <div className="info-box-subtitle">Trusted Terraform and the security obligation to check against.</div>
+            <div className="info-box-cta">Click to view →</div>
+          </div>
+        </div>
+
+        {/* Box 2: Environment */}
+        <div
+          className={`cavr-info-box ${activeBoxGlow === 'env' ? 'active-glow' : ''}`}
+          onClick={() => setShowEnvDialog(true)}
         >
-          <AlertTriangle size={14} /> Widened Boundary
-        </button>
-        <button 
-          className={`sable-pill ${selectedScenario === 'regressed' ? 'active' : ''}`}
-          onClick={() => setSelectedScenario('regressed')}
+          <div className="info-box-icon"><Cpu size={20}/></div>
+          <div className="info-box-body">
+            <div className="info-box-title">Environment checking</div>
+            <div className="info-box-subtitle">Local, offline tools that gather evidence.</div>
+            <div className="info-box-cta">Click here →</div>
+          </div>
+        </div>
+
+        {/* Box 3: Action */}
+        <div
+          className={`cavr-info-box ${activeBoxGlow === 'action' ? 'active-glow' : ''}`}
+          onClick={() => setShowActionDialog(true)}
         >
-          <Lock size={14} /> Regressed Access Control
-        </button>
+          <div className="info-box-icon"><Shield size={20}/></div>
+          <div className="info-box-body">
+            <div className="info-box-title">Action</div>
+            <div className="info-box-subtitle">Pipeline steps, signal weights, and decision logic.</div>
+            <div className="info-box-cta">Click to view →</div>
+          </div>
+        </div>
       </div>
 
-      <div className="sable-grid">
-        <div className="sable-card">
-          <div className="card-tag">TERRAFORM STATE ATTRIBUTION</div>
-          <h3>Successor Policy Mapping</h3>
-          <p>Analyzing candidate infrastructure definitions for InvoiceHub S3 storage and compute roles.</p>
-          
-          <div className="policy-diff-box">
-            <div className="diff-header">
-              <FileCode2 size={13} />
-              <span>iam_policy.tf (Candidate vs Baseline)</span>
+      {/* ── Wide workflow box ────────────────────────────────────────── */}
+      <div className="cavr-workflow-box">
+        {/* Scenario selector */}
+        <div className="sable-scenario-bar">
+          <div className="sable-scenario-families">
+            {families.slice(0, 8).map(family => {
+              const familyScenarios = scenarios.filter(s => s.family === family);
+              return (
+                <div key={family} className="sable-family-group">
+                  <div className="sable-family-label">{family.replace(/_/g, ' ')}</div>
+                  <div className="sable-family-chips">
+                    {familyScenarios.map(s => (
+                      <button
+                        key={s.id}
+                        className={`sable-scenario-chip ${selectedScenario === s.id ? 'active' : ''} ${s.is_hard_case ? 'hard-case' : ''}`}
+                        onClick={() => setSelectedScenario(s.id)}
+                        title={s.notes}
+                      >
+                        {s.is_hard_case && '⚡ '}
+                        {s.name.replace(/\[Hard\] /, '').slice(0, 28)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              className="sable-btn sable-btn-secondary"
+              style={{ padding: '8px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => setShowUploadDialog(true)}
+              title="Upload custom baseline and candidate Terraform bundles"
+            >
+              <Upload size={14}/> Upload bundle
+            </button>
+            <button
+              className="sable-run-btn"
+              onClick={runScenario}
+              disabled={isRunning}
+            >
+              {isRunning
+                ? <><RefreshCw size={14} className="spin"/> Running…</>
+                : <><Play size={14}/> Run scenario</>}
+            </button>
+          </div>
+        </div>
+
+        {/* 8-step timeline */}
+        <div className="cavr-timeline">
+          {STEP_NAMES.map((name, i) => {
+            const status = i < runState.stepIndex ? 'done' : i === runState.stepIndex ? 'running' : 'pending';
+            return (
+              <div
+                key={i}
+                className={`cavr-step ${status}`}
+                onClick={() => setExpandedStep(expandedStep === i ? null : i)}
+              >
+                <div className="cavr-step-indicator">
+                  <div className="cavr-step-dot"/>
+                  {i < STEP_NAMES.length - 1 && <div className="cavr-step-line"/>}
+                </div>
+                <div className="cavr-step-content">
+                  <div className="cavr-step-index">Step {i + 1}</div>
+                  <div className="cavr-step-name">{name}</div>
+                  <div className="cavr-step-phase">{STEP_PHASES[i]} · {STEP_SUBSTEPS[i]}</div>
+                  {status === 'running' && (
+                    <div className="cavr-step-status running">Running…</div>
+                  )}
+                  {status === 'done' && (
+                    <div className="cavr-step-status done"><CheckCircle2 size={11}/> Done</div>
+                  )}
+                </div>
+                <div className="cavr-step-chevron">
+                  {expandedStep === i ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Expanded step detail */}
+        {expandedStep !== null && (
+          <div className="sable-stage-detail">
+            <div className="sable-stage-detail-header">
+              <strong>Step {expandedStep + 1}: {STEP_NAMES[expandedStep]}</strong>
+              <span>{STEP_PHASES[expandedStep]} · {STEP_SUBSTEPS[expandedStep]}</span>
             </div>
-            <pre className="diff-code">
-{selectedScenario === 'preserved' && `
- resource "aws_iam_role_policy" "invoice_worker" {
-   name   = "InvoiceProcessingAccess"
-   role   = aws_iam_role.worker.id
-   policy = jsonencode({
-     Version = "2012-10-17"
-     Statement = [{
-       Action   = ["s3:GetObject"]
-       Effect   = "Allow"
-       Resource = "\${aws_s3_bucket.invoices.arn}/incoming/*"
-     }]
-   })
- }
-`}
-{selectedScenario === 'widened' && `
- resource "aws_iam_role_policy" "invoice_worker" {
-   name   = "InvoiceProcessingAccess"
-   role   = aws_iam_role.worker.id
-   policy = jsonencode({
-     Version = "2012-10-17"
-     Statement = [{
--      Action   = ["s3:GetObject"]
-+      Action   = ["s3:*"]
-       Effect   = "Allow"
--      Resource = "\${aws_s3_bucket.invoices.arn}/incoming/*"
-+      Resource = "*"
-     }]
-   })
- }
-`}
-{selectedScenario === 'regressed' && `
- resource "aws_s3_bucket_public_access_block" "invoices" {
-   bucket = aws_s3_bucket.invoices.id
--  block_public_acls   = true
-+  block_public_acls   = false
--  block_public_policy = true
-+  block_public_policy = false
- }
-`}
-            </pre>
+            <div className="sable-stage-detail-body">
+              {expandedStep === 0 && <p>ASENT intercepts the Terraform change proposal before it is applied and routes it to SABLE based on the obligation registry.</p>}
+              {expandedStep === 1 && <p>Baseline and candidate bundles are captured. SHA-256 computed for every file and bundle. Unified diff generated.</p>}
+              {expandedStep === 2 && (
+                <div>
+                  <p>HCL parsed with python-hcl2. Local variables, module calls and references resolved. Normalized resource model produced.</p>
+                  {runState.unsupportedConstructs.length > 0 && (
+                    <div className="sable-stage-warn">Unsupported constructs: {runState.unsupportedConstructs.join('; ')}</div>
+                  )}
+                </div>
+              )}
+              {expandedStep === 3 && (
+                <div>
+                  <p>Successor hypotheses generated from candidate resources of compatible type. Scored with fixed signals and thresholds.</p>
+                  {runState.hypotheses.length > 0 && (
+                    <p>Top hypothesis: <code>{runState.hypotheses[0]?.address}</code> with score {runState.hypotheses[0]?.score}</p>
+                  )}
+                </div>
+              )}
+              {expandedStep === 4 && (
+                <div>
+                  <p>Baseline obligation projected onto surviving hypotheses using the bounded authorization evaluator.</p>
+                  {runState.successor && <p>Chosen successor: <code>{runState.successor}</code></p>}
+                </div>
+              )}
+              {expandedStep === 5 && <p>Available local tools (Terraform validate, Checkov) run against the candidate. Unavailable tools labeled as built-in approximation.</p>}
+              {expandedStep === 6 && (
+                <div>
+                  <p>Decision logic executed. Branch fired: <code>{runState.branchFired ?? 'pending'}</code></p>
+                  {runState.verdict && <p>Verdict: <strong style={{ color: verdictColor }}>{runState.verdict}</strong></p>}
+                </div>
+              )}
+              {expandedStep === 7 && (
+                <div>
+                  <p>Hash-chained evidence record emitted. SARIF export available. ASENT handoff complete.</p>
+                  {runState.decisionHash && <p>Decision hash: <code>{runState.decisionHash.slice(0, 16)}…</code></p>}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Analysis Console */}
+        <div className="sable-console">
+          {/* Lifecycle bar */}
+          <div className="sable-lifecycle-bar">
+            {LIFECYCLE_STAGES.map((stage, i) => (
+              <div key={stage} className={`sable-lifecycle-stage ${lifecycleStage === i ? 'active' : lifecycleStage > i ? 'done' : ''}`}>
+                {stage}
+              </div>
+            ))}
+          </div>
+
+          {/* Badges */}
+          <div className="sable-console-badges">
+            <span className="sable-badge-info" title="No network access during analysis">Network OFF</span>
+            <span className="sable-badge-info" title="No cloud API calls">Cloud OFF</span>
+            <span className="sable-badge-info" title="No AI in decision path">LLM: none</span>
+            {Object.entries(runState.toolResults ?? {}).map(([tool, r]: any) => (
+              <span key={tool}
+                className={`sable-badge-tool ${r.real_tool ? 'real' : 'approx'}`}
+                title={r.claim ?? (r.real_tool ? 'Real tool' : 'Built-in approximation, not the real tool')}>
+                {tool.replace(/_/g, ' ')}
+              </span>
+            ))}
+          </div>
+
+          {/* Evidence meters */}
+          <div className="sable-meters">
+            {[
+              { label: 'Hypotheses generated', value: runState.meters.hypotheses_generated },
+              { label: 'Surviving filter', value: runState.meters.hypotheses_surviving },
+              { label: 'Conflicts', value: runState.meters.conflicts_found },
+              { label: 'Signals', value: runState.meters.signals_collected },
+              { label: 'Policy findings', value: runState.meters.policy_findings },
+            ].map(m => (
+              <div key={m.label} className="sable-meter-item">
+                <span className="sable-meter-label">{m.label}</span>
+                <span className="sable-meter-value">{m.value}</span>
+              </div>
+            ))}
+            {runState.uncertainty > 0 && (
+              <div className="sable-meter-item">
+                <span className="sable-meter-label">Uncertainty</span>
+                <span className="sable-meter-value" style={{ color: '#d97706' }}>{Math.round(runState.uncertainty * 100)}%</span>
+              </div>
+            )}
+          </div>
+
+          {/* Terminal */}
+          <div className="sable-terminal" ref={terminalRef}>
+            {runState.terminalLogs.length === 0 ? (
+              <span className="sable-terminal-placeholder">$ Ready. Select a scenario and click Run scenario.</span>
+            ) : (
+              runState.terminalLogs.map((log, i) => (
+                <div key={i} className="sable-terminal-line">{log}</div>
+              ))
+            )}
           </div>
         </div>
 
-        <div className="sable-card">
-          <div className="card-tag">Z3 SMT VERIFICATION ENGINE</div>
-          <h3>Boundary Formal Assurance</h3>
-          
-          <div className={`smt-result-card ${selectedScenario}`}>
-            <div className="smt-badge">
-              {selectedScenario === 'preserved' ? 'BOUNDARY PRESERVED · ACCEPT' : 'BOUNDARY VIOLATION · REJECT'}
-            </div>
-            <p>
-              {selectedScenario === 'preserved' 
-                ? 'Formal Z3 verification confirms that the proposed IAM policy is a strict subset or equivalent successor to the baseline security boundary.'
-                : 'Z3 solver generated a counter-example satisfying unauthorized actions outside the baseline invariant.'}
-            </p>
+        {/* Evidence tabs */}
+        <div className="cavr-evidence-tabs">
+          <div className="cavr-evidence-tab-bar">
+            {EVIDENCE_TABS.map(tab => {
+              const isUnlocked = unlockedTabs.has(tab.id);
+              const hasAlert = newTabAlerts[tab.id];
+              const isWholeBenchmark = tab.id === 'benchmark' || tab.id === 'ablations';
+              return (
+                <button
+                  key={tab.id}
+                  className={`cavr-evidence-tab ${activeEvidenceTab === tab.id ? 'active' : ''} ${!isUnlocked ? 'locked' : ''} ${hasAlert ? 'pulse' : ''}`}
+                  onClick={() => isUnlocked && setActiveEvidenceTab(tab.id)}
+                  title={!isUnlocked ? 'Runs when this stage completes' : isWholeBenchmark ? 'Whole-benchmark view — click Run Benchmark inside' : ''}
+                >
+                  {tab.label}
+                  {isWholeBenchmark && <span className="sable-tab-sub"> (whole benchmark)</span>}
+                  {hasAlert && <span className="sable-tab-pulse"/>}
+                </button>
+              );
+            })}
           </div>
 
-          <div className="sable-invariants-list">
-            <strong>Active Boundary Invariants:</strong>
-            <ul>
-              <li>Invoice storage bucket cannot allow unauthenticated public read.</li>
-              <li>Worker compute role cannot assume AdministratorAccess credentials.</li>
-              <li>Cross-account role assumption restricted to registered tenant ID.</li>
-            </ul>
+          <div className="cavr-evidence-tab-content">
+            {activeEvidenceTab === 'overview' && <OverviewTab runState={runState} explainSimply={explainSimply}/>}
+            {activeEvidenceTab === 'specification' && <SpecificationTab runState={runState} explainSimply={explainSimply}/>}
+            {activeEvidenceTab === 'diff' && <TerraformDiffTab runState={runState} explainSimply={explainSimply} onRerunCustom={handleRerunCustom}/>}
+            {activeEvidenceTab === 'graph' && <ResourceGraphTab runState={runState} explainSimply={explainSimply}/>}
+            {activeEvidenceTab === 'correspondence' && <CorrespondenceTab runState={runState} explainSimply={explainSimply}/>}
+            {activeEvidenceTab === 'projection' && <ProjectionTab runState={runState} explainSimply={explainSimply}/>}
+            {activeEvidenceTab === 'verification' && <VerificationTab runState={runState} explainSimply={explainSimply}/>}
+            {activeEvidenceTab === 'decision' && <DecisionTab runState={runState} explainSimply={explainSimply} onAuditDecision={sendAuditDecision}/>}
+            {activeEvidenceTab === 'benchmark' && <BenchmarkTab/>}
+            {activeEvidenceTab === 'ablations' && <AblationsKillTestsTab/>}
+            {activeEvidenceTab === 'evidence' && <EvidenceTab runState={runState} explainSimply={explainSimply}/>}
           </div>
         </div>
       </div>
+
+      {/* ── Dialogs ──────────────────────────────────────────────────── */}
+      {showBaselineDialog && baselineDialogData && (
+        <div className="cavr-dialog-overlay" onClick={() => setShowBaselineDialog(false)}>
+          <div className="cavr-dialog" onClick={e => e.stopPropagation()}>
+            <div className="cavr-dialog-header">
+              <div>
+                <div className="cavr-dialog-title">{baselineDialogData.title}</div>
+                <div className="cavr-dialog-subtitle">{baselineDialogData.subtitle}</div>
+              </div>
+              <button className="cavr-dialog-close" onClick={() => setShowBaselineDialog(false)}>✕</button>
+            </div>
+            <div className="cavr-dialog-body">
+              {/* Obligations table */}
+              <div className="sable-dialog-section">
+                <strong>Obligation Records</strong>
+                {baselineDialogData.obligations?.map((o: any) => (
+                  <div key={o.obligation_id} className="sable-obligation-card">
+                    <div className="sable-kv"><span>ID</span><code>{o.obligation_id}</code></div>
+                    <div className="sable-kv"><span>Principal</span><code>{o.principal}</code></div>
+                    <div className="sable-kv"><span>Actions</span><code>{o.actions?.join(', ')}</code></div>
+                    <div className="sable-kv"><span>Protected Asset</span><code>{o.protected_asset}</code></div>
+                    <div className="sable-kv"><span>Resource Scope</span><code>{o.resource_scope}</code></div>
+                    <div className="sable-kv"><span>Authority</span><span>{o.authority_source}</span></div>
+                  </div>
+                ))}
+              </div>
+              {/* Bundle SHA */}
+              <div className="sable-dialog-section">
+                <strong>Bundle SHA-256</strong>
+                <div className="sable-hash-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <code>{baselineDialogData.bundle_sha256}</code>
+                  <button
+                    className="sable-btn sable-btn-secondary"
+                    onClick={() => {
+                      if (baselineDialogData.bundle_sha256) {
+                        navigator.clipboard.writeText(baselineDialogData.bundle_sha256);
+                        setBaselineCopied(true);
+                        setTimeout(() => setBaselineCopied(false), 2000);
+                      }
+                    }}
+                    title="Click to copy SHA-256"
+                    style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    {baselineCopied ? <><Check size={12} color="#16a34a"/> Copied</> : <><Copy size={12}/> Copy</>}
+                  </button>
+                </div>
+              </div>
+              {/* Baseline predicate */}
+              <div className="sable-dialog-section">
+                <strong>Baseline Predicate</strong>
+                <div className={`sable-predicate-card ${baselineDialogData.baseline_predicate?.result === 'PASS' ? 'pass' : 'fail'}`}>
+                  <CheckCircle2 size={14}/> {baselineDialogData.baseline_predicate?.result} — {baselineDialogData.baseline_predicate?.reason}
+                </div>
+                <p className="sable-small-note">{baselineDialogData.baseline_predicate?.trust_note}</p>
+              </div>
+              {/* Baseline TF */}
+              <div className="sable-dialog-section">
+                <strong>Baseline Terraform</strong>
+                {Object.entries(baselineDialogData.baseline_tf_content ?? {}).map(([fname, content]: any) => (
+                  <div key={fname}>
+                    <code className="sable-filename">{fname}</code>
+                    <pre className="sable-tf-viewer">{content.slice(0, 2000)}</pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEnvDialog && envDialogData && (
+        <div className="cavr-dialog-overlay" onClick={() => setShowEnvDialog(false)}>
+          <div className="cavr-dialog" onClick={e => e.stopPropagation()}>
+            <div className="cavr-dialog-header">
+              <div>
+                <div className="cavr-dialog-title">{envDialogData.title}</div>
+                <div className="cavr-dialog-subtitle">{envDialogData.subtitle}</div>
+              </div>
+              <button className="cavr-dialog-close" onClick={() => setShowEnvDialog(false)}>✕</button>
+            </div>
+            <div className="cavr-dialog-body">
+              <div className="sable-flags-row">
+                {Object.entries(envDialogData.flags ?? {}).map(([k, v]) => (
+                  <span key={k} className="sable-flag-badge">{k.replace(/_/g, ' ')}: <strong>{String(v)}</strong></span>
+                ))}
+              </div>
+              <div className="sable-dialog-section">
+                <strong>Tool Inventory</strong>
+                {Object.values(envDialogData.tool_inventory ?? {}).map((t: any) => (
+                  <div key={t.name} className="sable-tool-inv-row">
+                    <div className="sable-tool-inv-name">
+                      {t.available
+                        ? <CheckCircle2 size={13} color="#16a34a"/>
+                        : <XCircle size={13} color="#dc2626"/>}
+                      <strong>{t.name}</strong>
+                      {t.version && <code>{t.version}</code>}
+                    </div>
+                    <div className="sable-tool-inv-purpose">{t.purpose}</div>
+                    {!t.available && t.fallback && (
+                      <div className="sable-tool-inv-fallback"><AlertTriangle size={11}/> {t.fallback}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="sable-dialog-section">
+                <strong>Supported IAM/S3 Subset</strong>
+                <ul className="sable-small-list">
+                  {Object.entries(envDialogData.supported_terraform_subset ?? {}).map(([k, v]: any) => (
+                    <li key={k}><code>{k}</code>: {Array.isArray(v) ? v.join(', ') : String(v)}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="sable-dialog-section">
+                <strong>Limitations</strong>
+                <ul className="sable-small-list">
+                  {(envDialogData.limitations ?? []).map((l: string, i: number) => <li key={i}>{l}</li>)}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showActionDialog && actionDialogData && (
+        <div className="cavr-dialog-overlay" onClick={() => setShowActionDialog(false)}>
+          <div className="cavr-dialog" onClick={e => e.stopPropagation()}>
+            <div className="cavr-dialog-header">
+              <div>
+                <div className="cavr-dialog-title">{actionDialogData.title}</div>
+                <div className="cavr-dialog-subtitle">{actionDialogData.subtitle}</div>
+              </div>
+              <button className="cavr-dialog-close" onClick={() => setShowActionDialog(false)}>✕</button>
+            </div>
+            <div className="cavr-dialog-body">
+              <div className="sable-dialog-section">
+                <strong>Pipeline Steps</strong>
+                {(actionDialogData.pipeline_steps ?? []).map((step: any) => (
+                  <div key={step.step} className="sable-pipeline-step">
+                    <span className="sable-step-num">{step.step}</span>
+                    <div><strong>{step.name}</strong> — {step.desc}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="sable-dialog-section">
+                <strong>Signals Table</strong>
+                <table className="sable-signals-table">
+                  <thead><tr><th>Signal</th><th>Weight</th></tr></thead>
+                  <tbody>
+                    {(actionDialogData.signals_table ?? []).map((s: any) => (
+                      <tr key={s.signal}><td>{s.signal}</td><td><code>{s.weight}</code></td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="sable-dialog-section">
+                <strong>Decision Logic</strong>
+                <pre className="sable-pseudocode">{actionDialogData.decision_pseudocode}</pre>
+              </div>
+              <div className="sable-dialog-section">
+                <strong>Outcomes</strong>
+                {(actionDialogData.outcomes ?? []).map((o: any) => (
+                  <div key={o.verdict} className="sable-outcome-card">
+                    <div className="sable-outcome-verdict" style={{ color: VERDICT_COLORS[o.verdict] ?? '#6b7280' }}>{o.verdict} → {o.asent_mapping}</div>
+                    <p><em>{o.wording}</em></p>
+                  </div>
+                ))}
+                <p className="sable-small-note">{actionDialogData.honesty_note}</p>
+                <p className="sable-small-note"><Lock size={11}/> {actionDialogData.llm_note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proof Drawer */}
+      {showProofDrawer && runState.proofData && (
+        <div className="cavr-dialog-overlay" onClick={() => setShowProofDrawer(false)}>
+          <div className="cavr-dialog" onClick={e => e.stopPropagation()} style={{ maxWidth: 680 }}>
+            <div className="cavr-dialog-header">
+              <div>
+                <div className="cavr-dialog-title">Proof Drawer</div>
+                <div className="cavr-dialog-subtitle">Cryptographic Evidence & Determinism Proof · Run {runState.runId}</div>
+              </div>
+              <button className="cavr-dialog-close" onClick={() => setShowProofDrawer(false)}>✕</button>
+            </div>
+            <div className="cavr-dialog-body">
+              {/* Determinism Re-run Verification */}
+              <div style={{
+                background: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '14px',
+                marginBottom: '1rem'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <strong style={{ fontSize: '0.85rem', color: '#1e293b' }}>Determinism Verification</strong>
+                    <span className="sable-small-note" style={{ display: 'block' }}>
+                      Re-runs the exact same input to prove decision hash is bit-for-bit identical (zero LLM / stochasticity).
+                    </span>
+                  </div>
+                  <button
+                    className="sable-btn sable-btn-primary"
+                    onClick={handleVerifyDeterminism}
+                    disabled={isVerifyingDeterminism}
+                    style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+                  >
+                    {isVerifyingDeterminism ? <><RefreshCw size={12} className="spin"/> Re-running…</> : <><RefreshCw size={12}/> Re-run to verify determinism</>}
+                  </button>
+                </div>
+
+                {rerunDeterminismResult && (
+                  <div style={{ marginTop: '10px', padding: '10px', background: rerunDeterminismResult.identical ? '#f0fdf4' : '#fef2f2', borderRadius: '6px', border: `1px solid ${rerunDeterminismResult.identical ? '#bbf7d0' : '#fecaca'}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: rerunDeterminismResult.identical ? '#16a34a' : '#dc2626', fontWeight: 600, fontSize: '0.85rem' }}>
+                      {rerunDeterminismResult.identical ? <CheckCircle2 size={16}/> : <XCircle size={16}/>}
+                      {rerunDeterminismResult.identical
+                        ? 'Identical decision hash confirmed! Execution is 100% deterministic.'
+                        : 'Determinism failure: Decision hash differed on re-run.'}
+                    </div>
+                    <div className="sable-kv" style={{ marginTop: 6 }}><span>Original Hash</span><code>{rerunDeterminismResult.original_hash}</code></div>
+                    <div className="sable-kv"><span>Re-run Hash</span><code>{rerunDeterminismResult.rerun_hash}</code></div>
+                  </div>
+                )}
+              </div>
+
+              {/* Exact commands & isolation */}
+              <div className="sable-dialog-section">
+                <strong>Local Evidence Tools & Execution Isolation</strong>
+                <div className="sable-kv-list">
+                  <div className="sable-kv"><span>HCL Parser</span><code>python-hcl2 v8.1.4 (pinned)</code></div>
+                  <div className="sable-kv"><span>Checkov</span><code>checkov --framework terraform --skip-download (offline)</code></div>
+                  <div className="sable-kv"><span>Terraform CLI</span><code>terraform validate (offline, cached providers)</code></div>
+                  <div className="sable-kv"><span>Isolation Flags</span><span>{runState.proofData.isolation_flags}</span></div>
+                  <div className="sable-kv"><span>LLM in Decision Path</span><strong>{runState.proofData.llm_in_decision_path}</strong></div>
+                  <div className="sable-kv"><span>Network / Cloud</span><span>Network OFF · Cloud OFF</span></div>
+                </div>
+              </div>
+
+              {/* Hashes and Config */}
+              <div className="sable-dialog-section">
+                <strong>Cryptographic Bundle & Policy Hashes</strong>
+                <div className="sable-kv-list">
+                  <div className="sable-kv"><span>Decision Hash</span><code>{runState.proofData.decision_hash}</code></div>
+                  <div className="sable-kv"><span>Baseline SHA-256</span><code>{runState.proofData.baseline_sha256}</code></div>
+                  <div className="sable-kv"><span>Candidate SHA-256</span><code>{runState.proofData.candidate_sha256}</code></div>
+                  <div className="sable-kv"><span>Confidence Threshold</span><code>{runState.proofData.config?.confidence_threshold ?? 6} pts</code></div>
+                  <div className="sable-kv"><span>Uniqueness Margin</span><code>{runState.proofData.config?.uniqueness_margin ?? 3} pts</code></div>
+                  <div className="sable-kv"><span>Evidence Ledger Length</span><code>{runState.proofData.evidence_chain_length} blocks</code></div>
+                </div>
+              </div>
+
+              {/* Execution log */}
+              <div className="sable-dialog-section">
+                <strong>Execution Log</strong>
+                <pre className="sable-terminal" style={{ maxHeight: 180, fontSize: '0.75rem' }}>
+                  {runState.proofData.logs?.join('\n')}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Bundle Dialog */}
+      {showUploadDialog && (
+        <div className="cavr-dialog-overlay" onClick={() => setShowUploadDialog(false)}>
+          <div className="cavr-dialog" onClick={e => e.stopPropagation()} style={{ maxWidth: 680 }}>
+            <div className="cavr-dialog-header">
+              <div>
+                <div className="cavr-dialog-title">Upload Custom Terraform Bundles</div>
+                <div className="cavr-dialog-subtitle">Test SABLE least-privilege boundary preservation on your own Terraform code</div>
+              </div>
+              <button className="cavr-dialog-close" onClick={() => setShowUploadDialog(false)}>✕</button>
+            </div>
+            <div className="cavr-dialog-body">
+              <div style={{ marginBottom: '1rem' }}>
+                <strong style={{ fontSize: '0.85rem' }}>Baseline Terraform (Trusted)</strong>
+                <textarea
+                  placeholder='resource "aws_s3_bucket" "customer_data" { ... }'
+                  value={uploadBaselineText}
+                  onChange={e => setUploadBaselineText(e.target.value)}
+                  style={{ width: '100%', height: 120, fontFamily: 'monospace', fontSize: '0.8rem', padding: 8, marginTop: 4, border: '1px solid #cbd5e1', borderRadius: 4 }}
+                />
+              </div>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <strong style={{ fontSize: '0.85rem' }}>Candidate Terraform (Refactored)</strong>
+                <textarea
+                  placeholder='module "storage" { source = "./modules/s3" ... }'
+                  value={uploadCandidateText}
+                  onChange={e => setUploadCandidateText(e.target.value)}
+                  style={{ width: '100%', height: 120, fontFamily: 'monospace', fontSize: '0.8rem', padding: 8, marginTop: 4, border: '1px solid #cbd5e1', borderRadius: 4 }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button className="sable-btn sable-btn-secondary" onClick={() => setShowUploadDialog(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="sable-btn sable-btn-primary"
+                  onClick={handleUploadRun}
+                  disabled={!uploadBaselineText || !uploadCandidateText}
+                >
+                  <Play size={13}/> Run Analysis on Custom Bundle
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

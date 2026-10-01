@@ -153,11 +153,11 @@ export const RequirementsTab: React.FC<RequirementsTabProps> = ({ state }) => {
           <table className="trace-table">
             <thead>
               <tr>
-                <th width="10%">Req ID</th>
-                <th width="24%">Requirement</th>
-                <th width="24%">Module Reference</th>
-                <th width="24%">Proving Event</th>
-                <th width="18%">Status</th>
+                <th style={{ width: '10%' }}>Req ID</th>
+                <th style={{ width: '24%' }}>Requirement</th>
+                <th style={{ width: '24%' }}>Module Reference</th>
+                <th style={{ width: '24%' }}>Proving Event</th>
+                <th style={{ width: '18%' }}>Status</th>
               </tr>
             </thead>
             <tbody>

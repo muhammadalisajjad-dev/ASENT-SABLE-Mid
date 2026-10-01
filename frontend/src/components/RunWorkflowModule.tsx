@@ -171,11 +171,11 @@ export const RunWorkflowModule: React.FC = () => {
             <span className="b-icon green"><Network size={16} /></span>
             <strong>SABLE GATE</strong>
             <span className={`badge ${selectedScenario.includes('sable_regressed') || selectedScenario.includes('sable_widened') ? 'bad' : 'good'}`}>
-              {selectedScenario.includes('sable_regressed') || selectedScenario.includes('sable_widened') ? 'REGRESSED' : 'PRESERVED'}
+              {selectedScenario.includes('sable_regressed') || selectedScenario.includes('sable_widened') ? 'REGRESSED → BLOCK' : 'PRESERVED → ACCEPT'}
             </span>
           </div>
           <p>Terraform cloud resources &amp; least-privilege IAM boundary attribution.</p>
-          <div className="b-meta">Z3 SMT solver verification</div>
+          <div className="b-meta">Obligation: S3-APPROLE-CUSTOMERDATA</div>
         </div>
 
         <div className="boundary-card">

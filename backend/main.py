@@ -27,6 +27,8 @@ from backend.cavr.api import cavr_router
 app.include_router(cavr_router)
 from backend.satra.api import satra_router
 app.include_router(satra_router)
+from backend.sable.api import sable_router
+app.include_router(sable_router)
 
 @app.middleware('http')
 async def local_origin(request:Request,call_next):

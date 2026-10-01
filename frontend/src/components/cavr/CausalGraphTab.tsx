@@ -69,7 +69,7 @@ export const CausalGraphTab: React.FC<CausalGraphTabProps> = ({ state }) => {
     return { ...node, x, y };
   });
 
-  const nodeMap = new Map(layoutNodes.map((n: any) => [n.id, n]));
+  const nodeMap = new Map<string, any>(layoutNodes.map((n: any) => [n.id, n]));
 
   return (
     <div className="evidence-tab-pane causal-pane">

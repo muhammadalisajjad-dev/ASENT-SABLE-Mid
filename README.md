@@ -209,3 +209,119 @@ CAVR includes 5 synthetic scenarios located in `backend/cavr/fixtures/scenarios.
   # Retrieve metrics
   curl "http://127.0.0.1:8000/api/cavr/metrics"
   ```
+
+---
+
+## SABLE Module — Infrastructure Security Boundary Assurance
+
+### Core Problem Statement
+Did the least-privilege boundary follow the data after the refactor?
+> "Terraform got restructured. We check whether the role that was allowed to touch the customer-data bucket is still allowed on the same data, no more and no less."
+
+SABLE evaluates a single registered obligation:
+- **Obligation ID**: `S3-APPROLE-CUSTOMERDATA`
+- **Principal**: `aws_iam_role.app`
+- **Actions**: `[s3:GetObject, s3:PutObject]`
+- **Protected Asset**: `aws_s3_bucket.customer_data`
+- **Resource Scope**: `arn:aws:s3:::customer-data/*`
+- **Authority Source**: Benchmark IAM policy document
+
+### Non-Negotiables & Honest Controlled Claims
+- **LLM in Decision Path**: **NONE**. Deterministic AST / HCL semantics. Zero cloud API calls, zero AWS accounts, fully functional with network unplugged.
+- **Controlled Honest Wording**:
+  - **PRESERVED**: *"Within the supported Terraform / AWS S3 / IAM model, this obligation remained preserved on the identified successor."* (ASENT: **ACCEPT**)
+  - **REGRESSED**: *"Demonstrated security-boundary regression under the stated policy model."* (ASENT: **BLOCK**)
+  - **UNKNOWN**: *"Evidence is insufficient or conflicting. This does not mean the change is safe."* (ASENT: **REVIEW**)
+  - SABLE never claims infrastructure is *"secure"* or *"safe"*.
+  - SABLE is not a scanner, not a repair engine, and not a Terraform replacement. Reviewers receive *"what to check"* guidance only.
+
+### 8 Pipeline Steps (Phases)
+1. **Step 1: AI Agent Proposes Terraform Change (Phase A & B / ASENT Routing)**: Detects `.tf` / `.tf.json` files and routes change to SABLE.
+2. **Step 2: Capture Baseline and Candidate (Phase Capture & Diff)**: Computes SHA-256 for all baseline/candidate files and generates unified diff.
+3. **Step 3: Normalize and Model (Phase Normalization & Obligation Model)**: Parses HCL with pinned `python-hcl2`, resolves locals, flattens module addresses, normalizes IAM policies (jsonencode, aws_iam_policy_document, attachments), and outputs a normalized resource graph.
+4. **Step 4: Find Successors (Phase Correspondence)**: Generates successor hypotheses and computes bounded signal scores (moved blocks, attribute similarity, references, module position, policy relationships) with fixed thresholds (`confidence=6`, `margin=3`).
+5. **Step 5: Project Obligation (Phase Projection)**: Projects baseline obligation onto surviving candidate hypotheses. Checks whether the correct successor has weaker/wider authorization or if a valid boundary is attached to the wrong asset.
+6. **Step 6: Verify (Phase Authorization & Local Evidence Tools)**: Evaluates Allow/Deny, action wildcards, resource ARN matching, and runs offline evidence tools (Terraform validate, Checkov, Trivy) inside locked-down environments, marking fallbacks as *"built-in approximation, not the real tool"*.
+7. **Step 7: Attribute (Phase Decision)**: Executes deterministic attribution logic:
+   $$\text{if no\_unique\_successor or evidence\_conflicts} \to \text{UNKNOWN}$$
+   $$\text{elif obligation\_holds(security, successor)} \to \text{PRESERVED}$$
+   $$\text{else} \to \text{REGRESSED}$$
+8. **Step 8: Report & Release / Review / Block (Phase Evidence)**: Emits SHA-256 hash-chained JSON evidence records and SARIF reports. Records reviewer decisions in `audit_log`.
+
+### 33 Benchmark Scenarios & 6 Hard Cases
+The fixture library includes 33 real scenarios covering rename/move into modules, splits, merges, replacements, parallel assets, policy rewrites, and 6 canonical hard cases:
+1. `hard_legitimate_move` → **PRESERVED** (moved block + physical identity + updated policy).
+2. `hard_module_split_ambiguous` → **UNKNOWN** (genuinely ambiguous split without moved metadata).
+3. `hard_wrong_binding` → **REGRESSED** (boundary satisfies local policy but targets wrong logical asset).
+4. `hard_privilege_widening` → **REGRESSED** (correct successor identified, but wildcard `s3:*` added).
+5. `hard_conflicting_evidence` → **UNKNOWN** (moved block points to A, but physical identity points to B).
+6. `policy_rewrite_wrong_target` → **REGRESSED** (rewritten policy targets different bucket).
+
+### Baselines B0 to B4
+- **B0**: Candidate-only policy check (no baseline comparison).
+- **B1**: Before/after scan-result comparison.
+- **B2**: Terraform plan / moved evidence only.
+- **B3**: Graph correspondence without obligation projection.
+- **B4**: Strongest reproducible combination of B0–B3 plus reference evidence. Labeled *"reduced-strength baseline"* if Checkov/Trivy are absent.
+
+### 6 Real Ablations & 6 Kill Tests (K1–K6)
+Configured in `backend/sable/sable_config.json`:
+- **Ablations**:
+  1. Remove explicit move evidence (`no_move_evidence`)
+  2. Remove dependency & reference context (`no_dependency_context`)
+  3. Remove policy-resource relationship evidence (`no_policy_relationship`)
+  4. Force best match / remove ambiguity handling (`no_ambiguity_handling`)
+  5. Correspondence without obligation projection (`no_obligation_projection`)
+  6. Obligation checking without correspondence (`no_correspondence`)
+- **Kill Tests (Pre-specified Falsification Criteria)**:
+  - **K1**: Strong-baseline equivalence ($B_4$ vs SABLE false-safe rate delta $\le 0.05$)
+  - **K2**: Address evidence suffices ($B_2$ hard case recall $< 0.60$)
+  - **K3**: Attribution ambiguity exists (benchmark hard case fraction $\ge 0.10$)
+  - **K4**: UNKNOWN escape hatch safety (hard-case UNKNOWN rate $\ge 0.50$ or FSR $\le 0.05$)
+  - **K5**: Security predicate non-trivial ($B_0$ false-safe rate $> 0.15$)
+  - **K6**: Execution feasibility (runtime $\le 60\text{s}$)
+
+### Running SABLE Scenarios & Benchmark
+
+#### Interactive Web UI
+1. Navigate to the **SABLE** tab at `http://127.0.0.1:8000` (or Vite dev port `5173`).
+2. Select any scenario chip or click **Upload bundle** to paste custom Terraform files.
+3. Click **Run scenario** to stream the 8-step SSE pipeline live.
+4. Inspect the 11 evidence tabs:
+   - **Overview**: Decision, ASENT mapping, fired branch, uncertainties.
+   - **Specification**: Problem statement, obligation table, requirements traceability matrix.
+   - **Terraform Diff**: Side-by-side diff with moved blocks, unsupported constructs, and **In-Browser Candidate Editor** with **Run again**.
+   - **Resource Graph**: Interactive SVG dependency graphs with obligation path.
+   - **Correspondence**: Signal heatmaps, stacked score bars, and uniqueness gap margin.
+   - **Projection**: Principal $\to$ Actions $\to$ Resource delta matrices.
+   - **Verification**: Local tool findings (real vs approximation).
+   - **Decision**: Pseudocode trace diagram and reviewer check guidance.
+   - **Benchmark**: Grouped bar charts, confusion matrices, and per-scenario matrix.
+   - **Ablations & Kill Tests**: Measured metric deltas and K1–K6 pass/fail cards.
+   - **Evidence**: Hash chain verification, SARIF and JSON export.
+5. In the **Proof Drawer**, click **Re-run to verify determinism** to verify bit-for-bit identical decision hashes.
+
+#### REST API & CLI
+```bash
+# List all 33 scenarios
+curl.exe -s http://127.0.0.1:8000/api/sable/scenarios
+
+# Run a scenario (e.g. rename_with_moved)
+python -c "import urllib.request, json; data = json.dumps({'scenario_id': 'rename_with_moved', 'obligation_id': 'S3-APPROLE-CUSTOMERDATA'}).encode(); req = urllib.request.Request('http://127.0.0.1:8000/api/sable/runs', data=data, headers={'Content-Type': 'application/json'}); res = urllib.request.urlopen(req); print(res.read().decode())"
+
+# Verify execution determinism
+curl.exe -X POST http://127.0.0.1:8000/api/sable/runs/<RUN_ID>/verify-determinism
+
+# Verify evidence hash chain
+curl.exe -s http://127.0.0.1:8000/api/sable/evidence/<RUN_ID>/verify
+
+# Run full benchmark and get metrics, ablations, and kill tests
+python -c "import urllib.request; req = urllib.request.Request('http://127.0.0.1:8000/api/sable/benchmark/run', data=b''); res = urllib.request.urlopen(req); [print(l.decode()) for l in res if 'benchmark.complete' in l.decode()]"
+
+# Retrieve cached benchmark results
+curl.exe -s http://127.0.0.1:8000/api/sable/benchmark/result
+
+# Run ground truth import isolation test
+.\.venv\Scripts\python.exe -m pytest tests/test_sable_isolation.py -v
+```
+

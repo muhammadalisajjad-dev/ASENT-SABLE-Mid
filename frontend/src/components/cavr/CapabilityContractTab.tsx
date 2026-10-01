@@ -51,11 +51,11 @@ export const CapabilityContractTab: React.FC<CapabilityContractTabProps> = ({ st
         <table className="matrix-table">
           <thead>
             <tr>
-              <th width="30%">Capability Scope</th>
-              <th width="15%">Declared Contract</th>
-              <th width="15%">Allowed Policy</th>
-              <th width="20%">Observed Dynamic</th>
-              <th width="20%">Result Matrix</th>
+              <th style={{ width: '30%' }}>Capability Scope</th>
+              <th style={{ width: '15%' }}>Declared Contract</th>
+              <th style={{ width: '15%' }}>Allowed Policy</th>
+              <th style={{ width: '20%' }}>Observed Dynamic</th>
+              <th style={{ width: '20%' }}>Result Matrix</th>
             </tr>
           </thead>
           <tbody>

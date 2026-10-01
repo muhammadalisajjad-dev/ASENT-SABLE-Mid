@@ -1,0 +1,62 @@
+{
+  "version": "1.0",
+  "confidence_threshold": 6,
+  "uniqueness_margin": 3,
+  "name_similarity_cap": 0,
+  "signal_weights": {
+    "resource_type_match": 1,
+    "unchanged_address": 8,
+    "explicit_moved_block": 10,
+    "physical_bucket_identity": 7,
+    "stable_asset_tag": 4,
+    "lifecycle_role_tag": 2,
+    "same_exported_application_reference": 4,
+    "module_output_preserves_reference": 4
+  },
+  "supported_resource_types": [
+    "aws_s3_bucket",
+    "aws_iam_role",
+    "aws_iam_role_policy",
+    "aws_iam_policy",
+    "aws_iam_role_policy_attachment",
+    "aws_s3_bucket_policy"
+  ],
+  "supported_iam_subset": {
+    "effects": [
+      "Allow",
+      "Deny"
+    ],
+    "action_wildcards": [
+      "s3:*",
+      "s3:Get*",
+      "s3:Put*"
+    ],
+    "resource_scope": [
+      "bucket-level",
+      "object-level"
+    ]
+  },
+  "kill_test_thresholds": {
+    "K1_false_safe_rate_delta_max": 0.05,
+    "K2_hard_case_recall_b2_max": 0.6,
+    "K3_ambiguity_fraction_min": 0.1,
+    "K4_unknown_rate_hard_cases_min": 0.5,
+    "K5_b0_false_safe_rate_max": 0.15,
+    "K6_runtime_seconds_max": 60
+  },
+  "ablations": {
+    "no_move_evidence": "Remove explicit moved block signal",
+    "no_dependency_context": "Remove reference/dependency neighbor signals",
+    "no_policy_relationship": "Remove policy-target relationship signal",
+    "no_ambiguity_handling": "Force best match when margin too small",
+    "no_obligation_projection": "Correspondence without obligation projection",
+    "no_correspondence": "Obligation checking without correspondence"
+  },
+  "baselines": {
+    "B0": "Candidate-only policy check",
+    "B1": "Before/after scan comparison",
+    "B2": "Terraform moved block evidence only",
+    "B3": "Graph correspondence without obligation projection",
+    "B4": "Strongest combination B0+B1+B2+B3+policy-relationship+reference"
+  }
+}
