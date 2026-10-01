@@ -23,6 +23,10 @@ async def lifespan(app):
 app=FastAPI(title='ASENT assurance API',version='1.0.0',lifespan=lifespan)
 from backend.threat_repo.api import router as threat_router
 app.include_router(threat_router(service))
+from backend.cavr.api import cavr_router
+app.include_router(cavr_router)
+from backend.satra.api import satra_router
+app.include_router(satra_router)
 
 @app.middleware('http')
 async def local_origin(request:Request,call_next):
