@@ -114,7 +114,7 @@ export const CausalGraphTab: React.FC<CausalGraphTabProps> = ({ state }) => {
         <svg className="causal-svg" viewBox="0 0 840 460">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
             </marker>
             <marker id="arrow-violating" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444" />
@@ -136,7 +136,7 @@ export const CausalGraphTab: React.FC<CausalGraphTabProps> = ({ state }) => {
                   y1={src.y}
                   x2={tgt.x}
                   y2={tgt.y}
-                  stroke={isViolating ? '#ef4444' : '#475569'}
+                  stroke={isViolating ? '#ef4444' : '#94a3b8'}
                   strokeWidth={isViolating ? 3 : 1.5}
                   strokeDasharray={isViolating ? "6,4" : "none"}
                   markerEnd={isViolating ? "url(#arrow-violating)" : "url(#arrow)"}
@@ -145,8 +145,9 @@ export const CausalGraphTab: React.FC<CausalGraphTabProps> = ({ state }) => {
                 <text
                   x={(src.x + tgt.x) / 2}
                   y={(src.y + tgt.y) / 2 - 8}
-                  fill={isViolating ? '#f87171' : '#94a3b8'}
+                  fill={isViolating ? '#dc2626' : '#64748b'}
                   fontSize="10"
+                  fontWeight="600"
                   textAnchor="middle"
                   className="edge-label"
                 >
@@ -170,22 +171,29 @@ export const CausalGraphTab: React.FC<CausalGraphTabProps> = ({ state }) => {
               >
                 {/* Shape based on kind */}
                 {n.kind === 'package' && (
-                  <rect x="-65" y="-22" width="130" height="44" rx="8" fill={isViolating ? '#450a0a' : '#0c4a6e'} stroke={isViolating ? '#ef4444' : '#38bdf8'} strokeWidth="2" />
+                  <rect x="-65" y="-22" width="130" height="44" rx="8" fill={isViolating ? '#fee2e2' : '#e0f2fe'} stroke={isViolating ? '#ef4444' : '#0284c7'} strokeWidth="2" />
                 )}
                 {n.kind === 'environment predicate' && (
-                  <polygon points="0,-22 55,-10 55,10 0,22 -55,10 -55,-10" fill="#451a03" stroke="#f59e0b" strokeWidth="2" />
+                  <polygon points="0,-22 55,-10 55,10 0,22 -55,10 -55,-10" fill="#fef3c7" stroke="#d97706" strokeWidth="2" />
                 )}
                 {n.kind === 'secret/canary' && (
-                  <rect x="-75" y="-20" width="150" height="40" rx="20" fill="#831843" stroke="#f43f5e" strokeWidth="2.5" />
+                  <rect x="-75" y="-20" width="150" height="40" rx="20" fill="#fce7f3" stroke="#db2777" strokeWidth="2" />
                 )}
                 {n.kind === 'endpoint' && (
-                  <circle cx="0" cy="0" r="26" fill="#7f1d1d" stroke="#ef4444" strokeWidth="2.5" />
+                  <circle cx="0" cy="0" r="26" fill="#fee2e2" stroke="#dc2626" strokeWidth="2" />
                 )}
                 {n.kind === 'module/function' && (
-                  <rect x="-60" y="-18" width="120" height="36" rx="6" fill="#1e1b4b" stroke="#818cf8" strokeWidth="1.5" />
+                  <rect x="-60" y="-18" width="120" height="36" rx="6" fill="#ede9fe" stroke="#7c3aed" strokeWidth="1.5" />
                 )}
 
-                <text x="0" y="4" fill="#ffffff" fontSize="11" fontWeight="600" textAnchor="middle">
+                <text 
+                  x="0" 
+                  y="4" 
+                  fill={isViolating ? '#991b1b' : (n.kind === 'secret/canary' ? '#9d174d' : (n.kind === 'environment predicate' ? '#92400e' : (n.kind === 'endpoint' ? '#991b1b' : (n.kind === 'module/function' ? '#5b21b6' : '#0369a1'))))} 
+                  fontSize="11" 
+                  fontWeight="700" 
+                  textAnchor="middle"
+                >
                   {n.label?.substring(0, 20)}
                 </text>
               </g>
