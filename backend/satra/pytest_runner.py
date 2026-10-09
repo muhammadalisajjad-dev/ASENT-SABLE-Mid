@@ -23,6 +23,12 @@ def permitted_builtin(root):
         if not candidate.is_file() or digest(candidate.read_bytes())!=digest(reference.read_bytes()):return False
     return all(digest((Path(root)/f).read_bytes()) in allowed for f in names if f.endswith('.py'))
 
+def container_user_args(engine):
+    # Bind-mounted workspaces belong to the host runner. The sandbox drops all
+    # capabilities, so use the matching UID/GID instead of relying on root DAC.
+    if engine=='docker' and os.name=='posix':return ['--user',f'{os.getuid()}:{os.getgid()}']
+    return []
+
 def run_pytest(root,output,selected='all',trusted=False):
     start=time.perf_counter();output=Path(output);output.mkdir(parents=True,exist_ok=True)
     caps=availability();engine=next((e for e in ('docker','podman') if caps[e]['available']),None)
@@ -38,7 +44,7 @@ def run_pytest(root,output,selected='all',trusted=False):
         args=['-q','-o','addopts=','-c',str(work/'pytest.ini'),'--junitxml='+str(work/'results.xml'),*targets]
         if engine:
             args=['-q','-o','addopts=','-c','/work/pytest.ini','--junitxml=/work/results.xml',*targets]
-            cmd=[engine,'run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--memory','512m','--cpus','1','--pids-limit','64','--tmpfs','/tmp:rw,nosuid,size=64m','-v',str(work)+':/work:rw','-w','/work','-e','PYTEST_DISABLE_PLUGIN_AUTOLOAD=1','asent-sandbox:local','python','-m','pytest',*args]
+            cmd=[engine,'run','--rm',*container_user_args(engine),'--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--memory','512m','--cpus','1','--pids-limit','64','--tmpfs','/tmp:rw,nosuid,size=64m','-v',str(work)+':/work:rw','-w','/work','-e','PYTEST_DISABLE_PLUGIN_AUTOLOAD=1','asent-sandbox:local','python','-m','pytest',*args]
         else:
             cmd=[sys.executable,'-I',str(ROOT/'backend/satra/runner_entry.py'),str(work),*args]
         env={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'HOME':str(work),'LANG':'C.UTF-8','PYTEST_DISABLE_PLUGIN_AUTOLOAD':'1','PYTHONDONTWRITEBYTECODE':'1'}

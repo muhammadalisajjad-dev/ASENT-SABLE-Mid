@@ -173,6 +173,13 @@ def test_satra_scc_and_inconclusive(scenario,service,tmp_path):
     service.change_threats(record_id='AUTHZ.IDOR.001',enabled=False)
     c=ContextService(r.candidate_workspace,r.baseline_workspace,service.threats.snapshot());assert satra(c,tmp_path/'disabled',lambda *a:None)[0]=='INCONCLUSIVE'
 
+def test_satra_docker_runner_matches_bind_mount_owner():
+    import os
+    from backend.satra.pytest_runner import container_user_args
+    expected=['--user',f'{os.getuid()}:{os.getgid()}'] if os.name=='posix' else []
+    assert container_user_args('docker')==expected
+    assert container_user_args('podman')==[]
+
 def test_oracle_validation_rejects_errors():
     assert preflight('def test_x():\n assert True')[0] is False
     assert preflight("import os\ndef test_x():\n assert '/invoices/'")[0] is False
